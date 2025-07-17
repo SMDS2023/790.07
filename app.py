@@ -1,5 +1,5 @@
 import dash
-from dash import dcc, html, Input, Output, callback
+from dash import dcc, html, Input, Output, callback, dash_table
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
@@ -63,21 +63,41 @@ def load_and_prepare_data(filepath):
     else:
         df['Statute_Description'] = df['Statute_Description'].fillna('No Description Available')
     
+    # Ensure ChargeOffenseDescription exists and handle missing values
+    if 'ChargeOffenseDescription' not in df.columns:
+        df['ChargeOffenseDescription'] = 'No Charge Description Available'
+    else:
+        df['ChargeOffenseDescription'] = df['ChargeOffenseDescription'].fillna('No Charge Description Available')
+    
+    # Clean and standardize agency names
+    if 'Lead_Agency' in df.columns:
+        df['Lead_Agency'] = df['Lead_Agency'].str.strip()
+        df['Lead_Agency'] = df['Lead_Agency'].fillna('Unknown Agency')
+    else:
+        df['Lead_Agency'] = 'Unknown Agency'
+    
     # Identify 790 charges
     df['Is_790_Charge'] = df['Statute'].str.startswith('790', na=False)
     
     return df
 
-def get_related_charges(df, selected_statute):
+def get_related_charges(df, selected_statute, selected_agency=None):
     """
     For a given 790 statute, find all related charges for defendants
-    who have that statute. Uses obscured defendant IDs.
+    who have that statute. Optionally filter by agency.
     """
+    # Start with base dataframe
+    filtered_df = df.copy()
+    
+    # Apply agency filter if selected
+    if selected_agency and selected_agency != 'All Agencies':
+        filtered_df = filtered_df[filtered_df['Lead_Agency'] == selected_agency]
+    
     # Get all defendants who have the selected statute
-    defendants_with_statute = df[df['Statute'] == selected_statute]['Defendant_ID'].unique()
+    defendants_with_statute = filtered_df[filtered_df['Statute'] == selected_statute]['Defendant_ID'].unique()
     
     # Get all charges for these defendants
-    related_charges_df = df[df['Defendant_ID'].isin(defendants_with_statute)]
+    related_charges_df = filtered_df[filtered_df['Defendant_ID'].isin(defendants_with_statute)]
     
     # Filter out the primary statute to focus on secondary offenses
     secondary_charges = related_charges_df[related_charges_df['Statute'] != selected_statute]
@@ -85,14 +105,18 @@ def get_related_charges(df, selected_statute):
     # Count occurrences of each secondary charge
     charge_counts = secondary_charges['Statute'].value_counts()
     
-    # Get the descriptions for better labeling - using Statute_Description
+    # Get the descriptions for better labeling - using Statute_Description for hover
     charge_descriptions = secondary_charges.groupby('Statute')['Statute_Description'].first()
+    
+    # Get ChargeOffenseDescription for the table
+    charge_offense_descriptions = secondary_charges.groupby('Statute')['ChargeOffenseDescription'].first()
     
     # Create a dataframe for plotting
     plot_df = pd.DataFrame({
         'Statute': charge_counts.index,
         'Count': charge_counts.values,
-        'Description': [charge_descriptions.get(s, 'No Description Available') for s in charge_counts.index]
+        'Description': [charge_descriptions.get(s, 'No Description Available') for s in charge_counts.index],
+        'ChargeOffenseDescription': [charge_offense_descriptions.get(s, 'No Charge Description Available') for s in charge_counts.index]
     })
     
     # Add percentage of defendants with this charge
@@ -135,6 +159,14 @@ try:
                 'Theft; Petit theft 2nd degree', 
                 'Battery; Aggravated battery'
             ] * 3,
+            'ChargeOffenseDescription': [
+                'WEAPONS-POSSESSION-COMMISSION OF FELONY', 
+                'RESIST OFFICER-OBSTRUCT WO VIOLENCE', 
+                'COCAINE-POSSESS-POSSESS COCAINE',
+                'PETIT THEFT $100 LESS THAN $750', 
+                'AGGRAVATED BATTERY-DEADLY WEAPON'
+            ] * 3,
+            'Lead_Agency': ['SHERIFF OFFICE'] * 5 + ['POLICE DEPT'] * 4 + ['STATE PATROL'] * 6,
             'OffenseDate': pd.date_range('2024-01-01', periods=15, freq='D').tolist()
         }
         df = pd.DataFrame(sample_data)
@@ -151,11 +183,16 @@ except Exception as e:
         'Defendant_ID': ['ID_001', 'ID_002'],
         'Statute': ['790.07', '843.02'],
         'Statute_Description': ['Weapons charge', 'Resisting arrest'],
+        'ChargeOffenseDescription': ['WEAPONS CHARGE', 'RESISTING ARREST'],
+        'Lead_Agency': ['SHERIFF OFFICE', 'POLICE DEPT'],
         'Is_790_Charge': [True, False]
     })
 
 # Get unique 790 statutes for dropdown
 statute_790_list = sorted(df[df['Is_790_Charge']]['Statute'].unique())
+
+# Get unique agencies for dropdown
+agency_list = ['All Agencies'] + sorted(df['Lead_Agency'].unique())
 
 # Define the app layout
 app.layout = html.Div([
@@ -171,17 +208,34 @@ app.layout = html.Div([
     
     # Control Panel
     html.Div([
+        # Dropdowns in a row
         html.Div([
-            html.Label("Select 790 Statute:", 
-                      style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
-            dcc.Dropdown(
-                id='statute-dropdown',
-                options=[{'label': statute, 'value': statute} for statute in statute_790_list],
-                value=statute_790_list[0] if statute_790_list else None,
-                placeholder="Select a 790 statute...",
-                style={'width': '300px'}
-            )
-        ], style={'marginBottom': '20px'}),
+            # Statute dropdown
+            html.Div([
+                html.Label("Select 790 Statute:", 
+                          style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
+                dcc.Dropdown(
+                    id='statute-dropdown',
+                    options=[{'label': statute, 'value': statute} for statute in statute_790_list],
+                    value=statute_790_list[0] if statute_790_list else None,
+                    placeholder="Select a 790 statute...",
+                    style={'width': '300px'}
+                )
+            ], style={'flex': '1', 'marginRight': '20px'}),
+            
+            # Agency dropdown
+            html.Div([
+                html.Label("Filter by Agency:", 
+                          style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
+                dcc.Dropdown(
+                    id='agency-dropdown',
+                    options=[{'label': agency, 'value': agency} for agency in agency_list],
+                    value='All Agencies',
+                    placeholder="Select an agency...",
+                    style={'width': '300px'}
+                )
+            ], style={'flex': '1'})
+        ], style={'display': 'flex', 'marginBottom': '20px'}),
         
         # Summary statistics
         html.Div(id='summary-stats', style={'marginBottom': '20px'})
@@ -192,6 +246,14 @@ app.layout = html.Div([
     html.Div([
         dcc.Graph(id='related-charges-bar-chart', style={'height': '600px'})
     ], style={'padding': '20px'}),
+    
+    # Secondary charges table section
+    html.Div([
+        html.H4("Secondary Charges Detail Table", 
+                style={'color': '#2c3e50', 'marginBottom': '15px'}),
+        html.Div(id='charges-table-container')
+    ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '10px',
+              'margin': '20px'}),
     
     # Additional insights
     html.Div([
@@ -207,14 +269,16 @@ app.layout = html.Div([
     ], style={'padding': '10px', 'marginTop': '20px'})
 ])
 
-# Callback for updating the chart and insights
+# Callback for updating the chart, table, and insights
 @app.callback(
     [Output('related-charges-bar-chart', 'figure'),
+     Output('charges-table-container', 'children'),
      Output('summary-stats', 'children'),
      Output('insights-text', 'children')],
-    [Input('statute-dropdown', 'value')]
+    [Input('statute-dropdown', 'value'),
+     Input('agency-dropdown', 'value')]
 )
-def update_chart(selected_statute):
+def update_dashboard(selected_statute, selected_agency):
     if not selected_statute:
         # Return empty chart if no statute selected
         fig = go.Figure()
@@ -222,10 +286,10 @@ def update_chart(selected_statute):
             title="Please select a statute from the dropdown",
             plot_bgcolor='white'
         )
-        return fig, "No statute selected", "Select a statute to see insights"
+        return fig, html.P("No data to display"), "No statute selected", "Select a statute to see insights"
     
     # Get related charges data
-    plot_df, total_defendants = get_related_charges(df, selected_statute)
+    plot_df, total_defendants = get_related_charges(df, selected_statute, selected_agency)
     
     if len(plot_df) == 0:
         fig = go.Figure()
@@ -233,33 +297,34 @@ def update_chart(selected_statute):
             title=f"No secondary charges found for {selected_statute}",
             plot_bgcolor='white'
         )
-        return fig, f"Total defendants with {selected_statute}: {total_defendants}", "No secondary charges to analyze"
+        return fig, html.P("No secondary charges to display"), f"Total defendants with {selected_statute}: {total_defendants}", "No secondary charges to analyze"
     
-    # Limit to top 20 for readability
-    plot_df = plot_df.head(20)
+    # Limit bar chart to top 20 for readability
+    plot_df_chart = plot_df.head(20)
     
     # Create the bar chart
     fig = go.Figure()
     
     # Add bars with custom colors based on percentage
     colors = ['#e74c3c' if pct > 50 else '#f39c12' if pct > 25 else '#3498db' 
-              for pct in plot_df['Percentage']]
+              for pct in plot_df_chart['Percentage']]
     
     fig.add_trace(go.Bar(
-        x=plot_df['Statute'],
-        y=plot_df['Count'],
-        text=plot_df['Percentage'].astype(str) + '%',
+        x=plot_df_chart['Statute'],
+        y=plot_df_chart['Count'],
+        text=plot_df_chart['Percentage'].astype(str) + '%',
         textposition='outside',
-        hovertext=plot_df['Hover_Text'],
+        hovertext=plot_df_chart['Hover_Text'],
         hoverinfo='text',
         marker_color=colors,
         name='Co-occurring Charges'
     ))
     
     # Update layout
+    agency_filter_text = f" (Agency: {selected_agency})" if selected_agency != 'All Agencies' else ""
     fig.update_layout(
         title={
-            'text': f"Secondary Offenses for Defendants with {selected_statute} Charges<br>" +
+            'text': f"Secondary Offenses for Defendants with {selected_statute} Charges{agency_filter_text}<br>" +
                    f"<span style='font-size: 14px; color: gray;'>Analyzing {total_defendants} anonymized defendants</span>",
             'x': 0.5,
             'xanchor': 'center'
@@ -281,6 +346,82 @@ def update_chart(selected_statute):
         height=600
     )
     
+    # Create the table for all secondary charges
+    # Prepare table data - show all charges, not just top 20
+    table_df = plot_df.copy()
+    
+    # Truncate long descriptions for better display
+    table_df['ChargeOffenseDescription_Display'] = table_df['ChargeOffenseDescription'].apply(
+        lambda x: x[:100] + '...' if len(str(x)) > 100 else x
+    )
+    
+    # Create the table
+    charges_table = dash_table.DataTable(
+        id='charges-detail-table',
+        columns=[
+            {'name': 'Statute', 'id': 'Statute'},
+            {'name': 'Charge Description', 'id': 'ChargeOffenseDescription_Display'},
+            {'name': 'Count', 'id': 'Count', 'type': 'numeric'},
+            {'name': '%', 'id': 'Percentage', 'type': 'numeric', 'format': {'specifier': '.1f'}}
+        ],
+        data=table_df.to_dict('records'),
+        style_cell={
+            'textAlign': 'left',
+            'padding': '10px',
+            'whiteSpace': 'normal',
+            'height': 'auto',
+            'minWidth': '50px',
+            'maxWidth': '500px'
+        },
+        style_cell_conditional=[
+            {
+                'if': {'column_id': 'Statute'},
+                'width': '15%'
+            },
+            {
+                'if': {'column_id': 'ChargeOffenseDescription_Display'},
+                'width': '60%'
+            },
+            {
+                'if': {'column_id': 'Count'},
+                'width': '12.5%',
+                'textAlign': 'center'
+            },
+            {
+                'if': {'column_id': 'Percentage'},
+                'width': '12.5%',
+                'textAlign': 'center'
+            }
+        ],
+        style_data_conditional=[
+            {
+                'if': {'row_index': 'odd'},
+                'backgroundColor': 'rgb(248, 248, 248)'
+            },
+            {
+                'if': {
+                    'filter_query': '{Percentage} > 50',
+                    'column_id': 'Percentage'
+                },
+                'backgroundColor': '#ffcccc',
+                'fontWeight': 'bold'
+            },
+            {
+                'if': {
+                    'filter_query': '{Percentage} > 25 && {Percentage} <= 50',
+                    'column_id': 'Percentage'
+                },
+                'backgroundColor': '#ffe6cc'
+            }
+        ],
+        style_header={
+            'backgroundColor': 'rgb(230, 230, 230)',
+            'fontWeight': 'bold'
+        },
+        page_size=15,
+        style_table={'height': '450px', 'overflowY': 'auto'}
+    )
+    
     # Create summary statistics
     summary_html = html.Div([
         html.Div([
@@ -294,9 +435,14 @@ def update_chart(selected_statute):
             html.Span(f"{len(plot_df)}")
         ], style={'marginBottom': '5px'}),
         html.Div([
+            html.Span("Agency Filter: ", 
+                     style={'fontWeight': 'bold'}),
+            html.Span(selected_agency)
+        ], style={'marginBottom': '5px'}),
+        html.Div([
             html.Span("Most Common Secondary Charge: ", 
                      style={'fontWeight': 'bold'}),
-            html.Span(f"{plot_df.iloc[0]['Statute']} - {plot_df.iloc[0]['Description'][:50]}... ({plot_df.iloc[0]['Percentage']}%)")
+            html.Span(f"{plot_df.iloc[0]['Statute']} - {plot_df.iloc[0]['ChargeOffenseDescription'][:50]}... ({plot_df.iloc[0]['Percentage']}%)")
             if len(plot_df) > 0 else html.Span("None")
         ])
     ])
@@ -310,7 +456,7 @@ def update_chart(selected_statute):
         insights.append(html.Li([
             html.Strong("High Correlation Pattern: "),
             f"The following charges appear in over 50% of {selected_statute} cases: ",
-            html.Ul([html.Li(f"{row['Statute']} - {row['Description'][:50]}... ({row['Percentage']}%)") 
+            html.Ul([html.Li(f"{row['Statute']} - {row['ChargeOffenseDescription'][:50]}... ({row['Percentage']}%)") 
                     for _, row in high_correlation.iterrows()])
         ]))
     
@@ -332,7 +478,7 @@ def update_chart(selected_statute):
         insights.append(html.Li([
             html.Strong("Violence Co-occurrence: "),
             f"Violence-related charges found: ",
-            html.Ul([html.Li(f"{row['Statute']} - {row['Description'][:50]}...") 
+            html.Ul([html.Li(f"{row['Statute']} - {row['ChargeOffenseDescription'][:50]}...") 
                     for _, row in violence_charges.iterrows()])
         ]))
     
@@ -344,7 +490,7 @@ def update_chart(selected_statute):
         insights.append(html.Li([
             html.Strong("Property Crime Connection: "),
             f"Property crimes appear in {property_percentage}% of cases, including: ",
-            ', '.join([f"{row['Statute']} ({row['Description'][:30]}...)" 
+            ', '.join([f"{row['Statute']} ({row['ChargeOffenseDescription'][:30]}...)" 
                       for _, row in property_charges.head(3).iterrows()])
         ]))
     
@@ -364,9 +510,18 @@ def update_chart(selected_statute):
                      style={'color': '#e74c3c'})
         ]))
     
+    # Agency-specific insights
+    if selected_agency != 'All Agencies':
+        agency_charges = df[df['Lead_Agency'] == selected_agency]
+        agency_790_rate = round(len(agency_charges[agency_charges['Is_790_Charge']]) / len(agency_charges) * 100, 1)
+        insights.append(html.Li([
+            html.Strong("Agency Pattern: "),
+            f"{selected_agency} has {agency_790_rate}% of their charges as 790 statutes"
+        ]))
+    
     insights_div = html.Ul(insights) if insights else html.P("Insufficient data for detailed pattern analysis")
     
-    return fig, summary_html, insights_div
+    return fig, charges_table, summary_html, insights_div
 
 # Run the app
 if __name__ == '__main__':
