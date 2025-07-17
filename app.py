@@ -84,7 +84,7 @@ def load_and_prepare_data(filepath):
 def get_related_charges(df, selected_statute, selected_agency=None):
     """
     For a given 790 statute, find all related charges for defendants
-    who have that statute. Optionally filter by agency.
+    who have that statute. Counts unique defendants per secondary statute.
     """
     # Start with base dataframe
     filtered_df = df.copy()
@@ -93,45 +93,73 @@ def get_related_charges(df, selected_statute, selected_agency=None):
     if selected_agency and selected_agency != 'All Agencies':
         filtered_df = filtered_df[filtered_df['Lead_Agency'] == selected_agency]
     
-    # Get all defendants who have the selected statute
-    defendants_with_statute = filtered_df[filtered_df['Statute'] == selected_statute]['Defendant_ID'].unique()
+    # Handle combined 790.07 analysis
+    if selected_statute == 'All 790.07':
+        statute_filter = filtered_df['Statute'].str.match(r'^790\.07(\(|$)')
+        primary_statute_display = "All 790.07"
+    else:
+        statute_filter = filtered_df['Statute'] == selected_statute
+        primary_statute_display = selected_statute
+    
+    # Get all defendants who have the selected statute(s)
+    defendants_with_statute = filtered_df[statute_filter]['Defendant_ID'].unique()
+    total_defendants = len(defendants_with_statute)
     
     # Get all charges for these defendants
     related_charges_df = filtered_df[filtered_df['Defendant_ID'].isin(defendants_with_statute)]
     
-    # Filter out the primary statute to focus on secondary offenses
-    secondary_charges = related_charges_df[related_charges_df['Statute'] != selected_statute]
+    # Filter out the primary statute(s) to focus on secondary offenses
+    if selected_statute == 'All 790.07':
+        secondary_charges = related_charges_df[~related_charges_df['Statute'].str.match(r'^790\.07(\(|$)')]
+    else:
+        secondary_charges = related_charges_df[related_charges_df['Statute'] != selected_statute]
     
-    # Count occurrences of each secondary charge
-    charge_counts = secondary_charges['Statute'].value_counts()
+    # For bar chart: Count unique defendants per statute
+    unique_defendants_per_statute = (
+        secondary_charges.groupby('Statute')['Defendant_ID']
+        .nunique()
+        .reset_index()
+        .rename(columns={'Defendant_ID': 'Unique_Defendants'})
+    )
     
-    # Get the descriptions for better labeling - using Statute_Description for hover
-    charge_descriptions = secondary_charges.groupby('Statute')['Statute_Description'].first()
+    # Get statute descriptions for the bar chart
+    statute_descriptions = secondary_charges.groupby('Statute')['Statute_Description'].first()
     
-    # Get ChargeOffenseDescription for the table
-    charge_offense_descriptions = secondary_charges.groupby('Statute')['ChargeOffenseDescription'].first()
+    # Create bar chart dataframe
+    plot_df = unique_defendants_per_statute.copy()
+    plot_df['Description'] = plot_df['Statute'].map(statute_descriptions).fillna('No Description Available')
+    plot_df = plot_df.sort_values('Unique_Defendants', ascending=False)
     
-    # Create a dataframe for plotting
-    plot_df = pd.DataFrame({
-        'Statute': charge_counts.index,
-        'Count': charge_counts.values,
-        'Description': [charge_descriptions.get(s, 'No Description Available') for s in charge_counts.index],
-        'ChargeOffenseDescription': [charge_offense_descriptions.get(s, 'No Charge Description Available') for s in charge_counts.index]
-    })
-    
-    # Add percentage of defendants with this charge
-    total_defendants = len(defendants_with_statute)
-    plot_df['Percentage'] = (plot_df['Count'] / total_defendants * 100).round(1)
-    
-    # Create hover text with proper descriptions
+    # Create hover text for bar chart
     plot_df['Hover_Text'] = (
         '<b>' + plot_df['Statute'] + '</b><br>' +
         '<i>' + plot_df['Description'] + '</i><br>' +
-        'Count: ' + plot_df['Count'].astype(str) + '<br>' +
-        'Percentage of Defendants: ' + plot_df['Percentage'].astype(str) + '%'
+        'Unique Defendants: ' + plot_df['Unique_Defendants'].astype(str)
     )
     
-    return plot_df, total_defendants
+    # For table: Count occurrences of statute + charge description combinations
+    combination_counts = (
+        secondary_charges.groupby(['Statute', 'ChargeOffenseDescription'])
+        .size()
+        .reset_index(name='Occurrence_Count')
+    )
+    
+    # Also get unique defendant count per combination
+    combination_defendants = (
+        secondary_charges.groupby(['Statute', 'ChargeOffenseDescription'])['Defendant_ID']
+        .nunique()
+        .reset_index(name='Unique_Defendants')
+    )
+    
+    # Merge the counts
+    table_df = combination_counts.merge(
+        combination_defendants, 
+        on=['Statute', 'ChargeOffenseDescription'],
+        how='left'
+    )
+    table_df = table_df.sort_values(['Statute', 'Occurrence_Count'], ascending=[True, False])
+    
+    return plot_df, table_df, total_defendants, primary_statute_display
 
 # Load the data - checking multiple possible locations
 try:
@@ -146,30 +174,45 @@ try:
         # If file not found, create sample data for demonstration
         print("Warning: CSV file not found. Using sample data for demonstration.")
         np.random.seed(42)
-        sample_data = {
-            'Defendant': ['John Doe'] * 5 + ['Jane Smith'] * 4 + ['Bob Johnson'] * 6,
-            'DOB': ['1990-01-01'] * 5 + ['1985-05-15'] * 4 + ['1975-12-20'] * 6,
-            'Statute': ['790.07', '843.02', '893.13', '812.014', '784.03'] + 
-                       ['790.07(1)', '810.02', '893.13', '322.34'] + 
-                       ['790.07(2)', '812.014', '893.13', '843.02', '784.045', '322.34'],
-            'Statute_Description': [
-                'Weapons; Possession during commission of felony', 
-                'Obstruction; Resisting officer without violence', 
-                'Drug Abuse Prevention; Possession of controlled substance',
-                'Theft; Petit theft 2nd degree', 
-                'Battery; Aggravated battery'
-            ] * 3,
-            'ChargeOffenseDescription': [
-                'WEAPONS-POSSESSION-COMMISSION OF FELONY', 
-                'RESIST OFFICER-OBSTRUCT WO VIOLENCE', 
-                'COCAINE-POSSESS-POSSESS COCAINE',
-                'PETIT THEFT $100 LESS THAN $750', 
-                'AGGRAVATED BATTERY-DEADLY WEAPON'
-            ] * 3,
-            'Lead_Agency': ['SHERIFF OFFICE'] * 5 + ['POLICE DEPT'] * 4 + ['STATE PATROL'] * 6,
-            'OffenseDate': pd.date_range('2024-01-01', periods=15, freq='D').tolist()
-        }
-        df = pd.DataFrame(sample_data)
+        # Create more realistic sample data with multiple charges per defendant
+        sample_records = []
+        defendants = ['John Doe', 'Jane Smith', 'Bob Johnson', 'Alice Brown', 'Charlie Davis']
+        
+        for i, defendant in enumerate(defendants):
+            dob = f"19{70+i}-01-01"
+            # Primary charge
+            sample_records.append({
+                'Defendant': defendant,
+                'DOB': dob,
+                'Statute': '790.07(2)' if i < 3 else '790.07(1)',
+                'Statute_Description': 'Weapons; Possession during commission of felony',
+                'ChargeOffenseDescription': 'WEAPONS-POSSESSION-COMMISSION OF FELONY',
+                'Lead_Agency': 'SHERIFF OFFICE' if i < 3 else 'POLICE DEPT',
+                'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i)
+            })
+            # Add multiple secondary charges
+            if i < 3:  # First 3 defendants get drug charges
+                sample_records.append({
+                    'Defendant': defendant,
+                    'DOB': dob,
+                    'Statute': '893.13(6)(A)',
+                    'Statute_Description': 'Drug Abuse Prevention; Possession of controlled substance',
+                    'ChargeOffenseDescription': 'POSS. OF CANNABIS >20 GMS (WITH A WEAPON)',
+                    'Lead_Agency': 'SHERIFF OFFICE',
+                    'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i)
+                })
+            if i < 2:  # First 2 also get another drug charge
+                sample_records.append({
+                    'Defendant': defendant,
+                    'DOB': dob,
+                    'Statute': '893.13(6)(A)',
+                    'Statute_Description': 'Drug Abuse Prevention; Possession of controlled substance',
+                    'ChargeOffenseDescription': 'COCAINE-POSSESS',
+                    'Lead_Agency': 'SHERIFF OFFICE',
+                    'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i)
+                })
+        
+        df = pd.DataFrame(sample_records)
         # Apply PII obscuration to sample data
         df['Defendant_Obscured'] = df['Defendant'].apply(lambda x: obscure_pii(x, "defendant"))
         df['DOB_Obscured'] = df['DOB'].apply(lambda x: obscure_pii(x, "dob"))
@@ -188,8 +231,9 @@ except Exception as e:
         'Is_790_Charge': [True, False]
     })
 
-# Get unique 790 statutes for dropdown
-statute_790_list = sorted(df[df['Is_790_Charge']]['Statute'].unique())
+# Get unique 790 statutes for dropdown - add combined option
+statute_790_list = ['All 790.07', '790.07(1)', '790.07(2)'] + sorted([s for s in df[df['Is_790_Charge']]['Statute'].unique() 
+                                                                     if s not in ['790.07(1)', '790.07(2)']])
 
 # Get unique agencies for dropdown
 agency_list = ['All Agencies'] + sorted(df['Lead_Agency'].unique())
@@ -217,7 +261,7 @@ app.layout = html.Div([
                 dcc.Dropdown(
                     id='statute-dropdown',
                     options=[{'label': statute, 'value': statute} for statute in statute_790_list],
-                    value=statute_790_list[0] if statute_790_list else None,
+                    value='790.07(2)',  # Default to 790.07(2) as requested
                     placeholder="Select a 790 statute...",
                     style={'width': '300px'}
                 )
@@ -249,7 +293,7 @@ app.layout = html.Div([
     
     # Secondary charges table section
     html.Div([
-        html.H4("Secondary Charges Detail Table", 
+        html.H4("Secondary Charges Detail - Statute & Charge Description Combinations", 
                 style={'color': '#2c3e50', 'marginBottom': '15px'}),
         html.Div(id='charges-table-container')
     ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '10px',
@@ -289,48 +333,47 @@ def update_dashboard(selected_statute, selected_agency):
         return fig, html.P("No data to display"), "No statute selected", "Select a statute to see insights"
     
     # Get related charges data
-    plot_df, total_defendants = get_related_charges(df, selected_statute, selected_agency)
+    plot_df, table_df, total_defendants, primary_statute_display = get_related_charges(
+        df, selected_statute, selected_agency
+    )
     
     if len(plot_df) == 0:
         fig = go.Figure()
         fig.update_layout(
-            title=f"No secondary charges found for {selected_statute}",
+            title=f"No secondary charges found for {primary_statute_display}",
             plot_bgcolor='white'
         )
-        return fig, html.P("No secondary charges to display"), f"Total defendants with {selected_statute}: {total_defendants}", "No secondary charges to analyze"
+        return fig, html.P("No secondary charges to display"), f"Total defendants with {primary_statute_display}: {total_defendants}", "No secondary charges to analyze"
     
-    # Limit bar chart to top 20 for readability
-    plot_df_chart = plot_df.head(20)
-    
-    # Create the bar chart
+    # Create the bar chart showing unique defendant counts
     fig = go.Figure()
     
-    # Add bars with custom colors based on percentage
-    colors = ['#e74c3c' if pct > 50 else '#f39c12' if pct > 25 else '#3498db' 
-              for pct in plot_df_chart['Percentage']]
+    # Limit to top 20 for readability
+    plot_df_chart = plot_df.head(20)
     
+    # Create bars
     fig.add_trace(go.Bar(
         x=plot_df_chart['Statute'],
-        y=plot_df_chart['Count'],
-        text=plot_df_chart['Percentage'].astype(str) + '%',
+        y=plot_df_chart['Unique_Defendants'],
+        text=plot_df_chart['Unique_Defendants'].astype(str),
         textposition='outside',
         hovertext=plot_df_chart['Hover_Text'],
         hoverinfo='text',
-        marker_color=colors,
-        name='Co-occurring Charges'
+        marker_color='#3498db',
+        name='Unique Defendants'
     ))
     
     # Update layout
     agency_filter_text = f" (Agency: {selected_agency})" if selected_agency != 'All Agencies' else ""
     fig.update_layout(
         title={
-            'text': f"Secondary Offenses for Defendants with {selected_statute} Charges{agency_filter_text}<br>" +
-                   f"<span style='font-size: 14px; color: gray;'>Analyzing {total_defendants} anonymized defendants</span>",
+            'text': f"Secondary Offenses for Defendants with {primary_statute_display} Charges{agency_filter_text}<br>" +
+                   f"<span style='font-size: 14px; color: gray;'>Total Defendants with {primary_statute_display}: {total_defendants}</span>",
             'x': 0.5,
             'xanchor': 'center'
         },
         xaxis_title="Related Statute",
-        yaxis_title="Number of Occurrences",
+        yaxis_title="Number of Unique Defendants",
         showlegend=False,
         hovermode='x unified',
         plot_bgcolor='white',
@@ -346,10 +389,7 @@ def update_dashboard(selected_statute, selected_agency):
         height=600
     )
     
-    # Create the table for all secondary charges
-    # Prepare table data - show all charges, not just top 20
-    table_df = plot_df.copy()
-    
+    # Create the table showing statute + charge description combinations
     # Truncate long descriptions for better display
     table_df['ChargeOffenseDescription_Display'] = table_df['ChargeOffenseDescription'].apply(
         lambda x: x[:100] + '...' if len(str(x)) > 100 else x
@@ -361,8 +401,8 @@ def update_dashboard(selected_statute, selected_agency):
         columns=[
             {'name': 'Statute', 'id': 'Statute'},
             {'name': 'Charge Description', 'id': 'ChargeOffenseDescription_Display'},
-            {'name': 'Count', 'id': 'Count', 'type': 'numeric'},
-            {'name': '%', 'id': 'Percentage', 'type': 'numeric', 'format': {'specifier': '.1f'}}
+            {'name': 'Total Count', 'id': 'Occurrence_Count', 'type': 'numeric'},
+            {'name': 'Unique Defendants', 'id': 'Unique_Defendants', 'type': 'numeric'}
         ],
         data=table_df.to_dict('records'),
         style_cell={
@@ -380,16 +420,16 @@ def update_dashboard(selected_statute, selected_agency):
             },
             {
                 'if': {'column_id': 'ChargeOffenseDescription_Display'},
-                'width': '60%'
+                'width': '55%'
             },
             {
-                'if': {'column_id': 'Count'},
-                'width': '12.5%',
+                'if': {'column_id': 'Occurrence_Count'},
+                'width': '15%',
                 'textAlign': 'center'
             },
             {
-                'if': {'column_id': 'Percentage'},
-                'width': '12.5%',
+                'if': {'column_id': 'Unique_Defendants'},
+                'width': '15%',
                 'textAlign': 'center'
             }
         ],
@@ -397,21 +437,6 @@ def update_dashboard(selected_statute, selected_agency):
             {
                 'if': {'row_index': 'odd'},
                 'backgroundColor': 'rgb(248, 248, 248)'
-            },
-            {
-                'if': {
-                    'filter_query': '{Percentage} > 50',
-                    'column_id': 'Percentage'
-                },
-                'backgroundColor': '#ffcccc',
-                'fontWeight': 'bold'
-            },
-            {
-                'if': {
-                    'filter_query': '{Percentage} > 25 && {Percentage} <= 50',
-                    'column_id': 'Percentage'
-                },
-                'backgroundColor': '#ffe6cc'
             }
         ],
         style_header={
@@ -419,18 +444,19 @@ def update_dashboard(selected_statute, selected_agency):
             'fontWeight': 'bold'
         },
         page_size=15,
-        style_table={'height': '450px', 'overflowY': 'auto'}
+        style_table={'height': '450px', 'overflowY': 'auto'},
+        sort_action="native"
     )
     
     # Create summary statistics
     summary_html = html.Div([
         html.Div([
-            html.Span(f"Total Defendants with {selected_statute}: ", 
+            html.Span(f"Total Unique Defendants with {primary_statute_display}: ", 
                      style={'fontWeight': 'bold'}),
-            html.Span(f"{total_defendants}")
+            html.Span(f"{total_defendants}", style={'fontSize': '18px', 'color': '#e74c3c'})
         ], style={'marginBottom': '5px'}),
         html.Div([
-            html.Span("Total Unique Secondary Charges: ", 
+            html.Span("Total Unique Secondary Statutes: ", 
                      style={'fontWeight': 'bold'}),
             html.Span(f"{len(plot_df)}")
         ], style={'marginBottom': '5px'}),
@@ -440,9 +466,9 @@ def update_dashboard(selected_statute, selected_agency):
             html.Span(selected_agency)
         ], style={'marginBottom': '5px'}),
         html.Div([
-            html.Span("Most Common Secondary Charge: ", 
+            html.Span("Most Common Secondary Statute: ", 
                      style={'fontWeight': 'bold'}),
-            html.Span(f"{plot_df.iloc[0]['Statute']} - {plot_df.iloc[0]['ChargeOffenseDescription'][:50]}... ({plot_df.iloc[0]['Percentage']}%)")
+            html.Span(f"{plot_df.iloc[0]['Statute']} ({plot_df.iloc[0]['Unique_Defendants']} defendants)")
             if len(plot_df) > 0 else html.Span("None")
         ])
     ])
@@ -450,73 +476,72 @@ def update_dashboard(selected_statute, selected_agency):
     # Generate insights
     insights = []
     
-    # High correlation charges (>50% of defendants)
-    high_correlation = plot_df[plot_df['Percentage'] > 50]
-    if len(high_correlation) > 0:
+    # Top secondary charges
+    if len(plot_df) >= 3:
+        top_3 = plot_df.head(3)
         insights.append(html.Li([
-            html.Strong("High Correlation Pattern: "),
-            f"The following charges appear in over 50% of {selected_statute} cases: ",
-            html.Ul([html.Li(f"{row['Statute']} - {row['ChargeOffenseDescription'][:50]}... ({row['Percentage']}%)") 
-                    for _, row in high_correlation.iterrows()])
+            html.Strong("Top 3 Secondary Charges: "),
+            html.Ol([
+                html.Li(f"{row['Statute']} - {row['Unique_Defendants']} defendants") 
+                for _, row in top_3.iterrows()
+            ])
         ]))
     
-    # Drug-related charges
+    # Drug-related charges analysis
     drug_charges = plot_df[plot_df['Statute'].str.startswith('893', na=False)]
     if len(drug_charges) > 0:
-        total_drug_cases = drug_charges['Count'].sum()
-        drug_percentage = round(total_drug_cases / total_defendants * 100, 1)
+        total_drug_defendants = drug_charges['Unique_Defendants'].sum()
+        # Account for defendants with multiple drug charges
+        unique_drug_defendants = len(df[
+            (df['Defendant_ID'].isin(df[df['Statute'] == selected_statute]['Defendant_ID'])) &
+            (df['Statute'].str.startswith('893'))
+        ]['Defendant_ID'].unique())
+        
         insights.append(html.Li([
             html.Strong("Drug-Firearm Nexus: "),
-            f"Drug charges (Chapter 893) appear in {drug_percentage}% of {selected_statute} cases, ",
+            f"{unique_drug_defendants} defendants ({round(unique_drug_defendants/total_defendants*100, 1)}%) have drug charges, ",
             f"including: {', '.join(drug_charges['Statute'].head(3).tolist())}"
+        ]))
+    
+    # Multiple charge descriptions for same statute
+    multi_desc_statutes = table_df.groupby('Statute').size()
+    multi_desc_statutes = multi_desc_statutes[multi_desc_statutes > 1]
+    if len(multi_desc_statutes) > 0:
+        insights.append(html.Li([
+            html.Strong("Charge Variation: "),
+            f"The following statutes have multiple charge descriptions: ",
+            ', '.join(multi_desc_statutes.index.tolist()[:5])
         ]))
     
     # Violence-related charges
     violence_prefixes = ['784', '782', '787']  # Battery, murder, kidnapping
     violence_charges = plot_df[plot_df['Statute'].str[:3].isin(violence_prefixes)]
     if len(violence_charges) > 0:
+        total_violence_defendants = violence_charges['Unique_Defendants'].sum()
         insights.append(html.Li([
             html.Strong("Violence Co-occurrence: "),
-            f"Violence-related charges found: ",
-            html.Ul([html.Li(f"{row['Statute']} - {row['ChargeOffenseDescription'][:50]}...") 
-                    for _, row in violence_charges.iterrows()])
+            f"{total_violence_defendants} defendants have violence-related charges: ",
+            ', '.join([f"{row['Statute']} ({row['Unique_Defendants']} defendants)" 
+                      for _, row in violence_charges.head(3).iterrows()])
         ]))
     
-    # Property crimes
-    property_prefixes = ['810', '812']  # Burglary, theft
-    property_charges = plot_df[plot_df['Statute'].str[:3].isin(property_prefixes)]
-    if len(property_charges) > 0:
-        property_percentage = round(property_charges['Count'].sum() / total_defendants * 100, 1)
+    # Comparison between 790.07(1) and 790.07(2) if viewing combined
+    if selected_statute == 'All 790.07':
+        charges_790_07_1 = df[df['Statute'] == '790.07(1)']['Defendant_ID'].nunique()
+        charges_790_07_2 = df[df['Statute'] == '790.07(2)']['Defendant_ID'].nunique()
         insights.append(html.Li([
-            html.Strong("Property Crime Connection: "),
-            f"Property crimes appear in {property_percentage}% of cases, including: ",
-            ', '.join([f"{row['Statute']} ({row['ChargeOffenseDescription'][:30]}...)" 
-                      for _, row in property_charges.head(3).iterrows()])
+            html.Strong("790.07 Breakdown: "),
+            f"790.07(1): {charges_790_07_1} defendants, ",
+            f"790.07(2): {charges_790_07_2} defendants"
         ]))
     
-    # Traffic-related charges
-    traffic_charges = plot_df[plot_df['Statute'].str.startswith('322', na=False)]
-    if len(traffic_charges) > 0:
-        insights.append(html.Li([
-            html.Strong("Traffic Violations: "),
-            f"Traffic-related charges (Chapter 322) co-occur in {traffic_charges.iloc[0]['Percentage']}% of cases"
-        ]))
-    
-    # Red flag analysis
-    if len(high_correlation) > 2:
+    # Red flag for high drug correlation
+    if len(drug_charges) > 0 and unique_drug_defendants/total_defendants > 0.5:
         insights.append(html.Li([
             html.Strong("⚠️ Potential Red Flag: "),
-            html.Span(f"Multiple charges appear in >50% of {selected_statute} cases, suggesting potential charge stacking patterns", 
+            html.Span(f"Over 50% of {primary_statute_display} defendants also have drug charges, "
+                     "suggesting strong drug-firearm correlation in enforcement patterns", 
                      style={'color': '#e74c3c'})
-        ]))
-    
-    # Agency-specific insights
-    if selected_agency != 'All Agencies':
-        agency_charges = df[df['Lead_Agency'] == selected_agency]
-        agency_790_rate = round(len(agency_charges[agency_charges['Is_790_Charge']]) / len(agency_charges) * 100, 1)
-        insights.append(html.Li([
-            html.Strong("Agency Pattern: "),
-            f"{selected_agency} has {agency_790_rate}% of their charges as 790 statutes"
         ]))
     
     insights_div = html.Ul(insights) if insights else html.P("Insufficient data for detailed pattern analysis")
