@@ -77,6 +77,13 @@ def load_and_prepare_data(filepath):
     else:
         df['Lead_Agency'] = 'Unknown Agency'
     
+    # Clean officer names
+    if 'Lead_Officer' in df.columns:
+        df['Lead_Officer'] = df['Lead_Officer'].str.strip()
+        df['Lead_Officer'] = df['Lead_Officer'].fillna('Unknown Officer')
+    else:
+        df['Lead_Officer'] = 'Unknown Officer'
+    
     # Clean demographic data
     if 'Race_Tier_1' in df.columns:
         df['Race_Tier_1'] = df['Race_Tier_1'].str.upper().str.strip()
@@ -85,6 +92,7 @@ def load_and_prepare_data(filepath):
         df['Race_Display'] = df['Race_Tier_1'].map(race_mapping).fillna('Unknown')
     else:
         df['Race_Display'] = 'Unknown'
+        df['Race_Tier_1'] = 'U'
     
     if 'Gender' in df.columns:
         df['Gender'] = df['Gender'].str.upper().str.strip()
@@ -107,6 +115,9 @@ def load_and_prepare_data(filepath):
     
     # Identify 790 charges
     df['Is_790_Charge'] = df['Statute'].str.startswith('790', na=False)
+    
+    # Identify specific 790.07 variants
+    df['Is_790_07_Any'] = df['Statute'].str.match(r'^790\.07(\(|$)', na=False)
     
     return df
 
@@ -166,37 +177,87 @@ def get_related_charges(df, selected_statute, selected_agency=None):
         'Unique Defendants: ' + plot_df['Unique_Defendants'].astype(str)
     )
     
-    # For table: Count occurrences of statute + charge description combinations
-    combination_counts = (
-        secondary_charges.groupby(['Statute', 'ChargeOffenseDescription'])
-        .size()
-        .reset_index(name='Occurrence_Count')
-    )
-    
-    # Also get unique defendant count per combination
-    combination_defendants = (
-        secondary_charges.groupby(['Statute', 'ChargeOffenseDescription'])['Defendant_ID']
-        .nunique()
-        .reset_index(name='Unique_Defendants')
-    )
-    
-    # Merge the counts
-    table_df = combination_counts.merge(
-        combination_defendants, 
-        on=['Statute', 'ChargeOffenseDescription'],
-        how='left'
-    )
-    table_df = table_df.sort_values(['Statute', 'Occurrence_Count'], ascending=[True, False])
-    
     # Get demographic data for primary charges only
     primary_charges_df = filtered_df[statute_filter]
     demographics = {
         'race': primary_charges_df.groupby('Race_Display')['Defendant_ID'].nunique().to_dict(),
         'gender': primary_charges_df.groupby('Gender_Display')['Defendant_ID'].nunique().to_dict(),
-        'age': primary_charges_df.groupby('Age_Group')['Defendant_ID'].nunique().to_dict()
+        'age': primary_charges_df.groupby('Age_Group')['Defendant_ID'].nunique().to_dict(),
+        'age_race': primary_charges_df.groupby(['Age_Group', 'Race_Tier_1'])['Defendant_ID'].nunique().reset_index()
     }
     
-    return plot_df, table_df, total_defendants, primary_statute_display, demographics
+    return plot_df, total_defendants, primary_statute_display, demographics
+
+def get_officer_analysis(df):
+    """
+    Analyze officers who have charged any version of 790.07
+    """
+    # Get all 790.07 charges (any version)
+    charges_790_07 = df[df['Is_790_07_Any']]
+    
+    # Get unique officers who have charged 790.07
+    officers_with_790_07 = charges_790_07['Lead_Officer'].unique()
+    
+    # Get all charges by these officers
+    officer_charges = df[df['Lead_Officer'].isin(officers_with_790_07)]
+    
+    # Count charges per officer
+    officer_counts = (
+        officer_charges.groupby('Lead_Officer')
+        .agg({
+            'Statute': 'count',
+            'Is_790_07_Any': 'sum'
+        })
+        .rename(columns={
+            'Statute': 'Total_Charges',
+            'Is_790_07_Any': '790_07_Charges'
+        })
+        .reset_index()
+    )
+    officer_counts['Other_Charges'] = officer_counts['Total_Charges'] - officer_counts['790_07_Charges']
+    officer_counts = officer_counts.sort_values('Total_Charges', ascending=False)
+    
+    return officer_counts
+
+def get_defendant_charges_table(df):
+    """
+    Create a table showing each defendant with their charges
+    Focus on defendants with 790.07 charges
+    """
+    # Get defendants with any 790.07 charge
+    defendants_with_790_07 = df[df['Is_790_07_Any']]['Defendant_ID'].unique()
+    
+    # Get all charges for these defendants
+    defendant_charges = df[df['Defendant_ID'].isin(defendants_with_790_07)]
+    
+    # Create a pivot-style view
+    defendant_summary = []
+    
+    for defendant_id in defendants_with_790_07[:50]:  # Limit to first 50 for performance
+        charges = defendant_charges[defendant_charges['Defendant_ID'] == defendant_id].sort_values('OffenseDate')
+        
+        # Get basic info
+        officer = charges['Lead_Officer'].mode()[0] if len(charges) > 0 else 'Unknown'
+        
+        # Get charge list
+        charge_list = charges['Statute'].tolist()
+        
+        # Create row
+        row = {
+            'Defendant': defendant_id,
+            'Officer': officer,
+            'Total_Charges': len(charges),
+            'Charges': ', '.join(charge_list[:5])  # Show first 5 charges
+        }
+        
+        # Add specific charge columns
+        for i, (_, charge) in enumerate(charges.iterrows()):
+            if i < 5:  # Limit to 5 charges for display
+                row[f'Charge_{i+1}'] = f"{charge['Statute']} ({charge['OffenseDate'].strftime('%Y-%m-%d') if pd.notna(charge['OffenseDate']) else 'N/A'})"
+        
+        defendant_summary.append(row)
+    
+    return pd.DataFrame(defendant_summary)
 
 # Load the data - checking multiple possible locations
 try:
@@ -223,10 +284,13 @@ try:
         races = ['B', 'W', 'B', 'W', 'O']
         genders = ['M', 'F', 'M', 'F', 'M']
         ages = [23, 34, 19, 45, 28]
+        officers = ['Officer Smith', 'Officer Jones', 'Officer Brown']
         
         for i, defendant in enumerate(defendants):
             dob = f"19{70+i}-01-01"
-            # Primary charge
+            officer = officers[i % len(officers)]
+            
+            # Primary charge - 790.07
             sample_records.append({
                 'Defendant': defendant,
                 'DOB': dob,
@@ -234,21 +298,40 @@ try:
                 'Statute_Description': 'Weapons; Possession during commission of felony',
                 'ChargeOffenseDescription': 'WEAPONS-POSSESSION-COMMISSION OF FELONY',
                 'Lead_Agency': 'SHERIFF OFFICE' if i < 3 else 'POLICE DEPT',
+                'Lead_Officer': officer,
                 'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i),
                 'Race_Tier_1': races[i],
                 'Gender': genders[i],
                 'Age_At_Offense': ages[i]
             })
+            
             # Add secondary charges
             if i < 3:  # First 3 defendants get drug charges
                 sample_records.append({
                     'Defendant': defendant,
                     'DOB': dob,
-                    'Statute': '893.13(6)(A)',
+                    'Statute': '893.13(1)(A)',
                     'Statute_Description': 'Drug Abuse Prevention; Possession of controlled substance',
-                    'ChargeOffenseDescription': 'POSS. OF CANNABIS >20 GMS (WITH A WEAPON)',
+                    'ChargeOffenseDescription': 'POSS. OF CANNABIS <20 GMS',
                     'Lead_Agency': 'SHERIFF OFFICE',
-                    'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i),
+                    'Lead_Officer': officer,
+                    'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i+1),
+                    'Race_Tier_1': races[i],
+                    'Gender': genders[i],
+                    'Age_At_Offense': ages[i]
+                })
+            
+            # Add additional charges
+            if i < 2:
+                sample_records.append({
+                    'Defendant': defendant,
+                    'DOB': dob,
+                    'Statute': '843.02',
+                    'Statute_Description': 'Resisting officer without violence',
+                    'ChargeOffenseDescription': 'RESIST OFFICER W/O VIOLENCE',
+                    'Lead_Agency': 'SHERIFF OFFICE',
+                    'Lead_Officer': officer,
+                    'OffenseDate': pd.Timestamp('2024-01-01') + pd.Timedelta(days=i+2),
                     'Race_Tier_1': races[i],
                     'Gender': genders[i],
                     'Age_At_Offense': ages[i]
@@ -269,8 +352,11 @@ except Exception as e:
         'Statute_Description': ['Weapons charge', 'Resisting arrest'],
         'ChargeOffenseDescription': ['WEAPONS CHARGE', 'RESISTING ARREST'],
         'Lead_Agency': ['SHERIFF OFFICE', 'POLICE DEPT'],
+        'Lead_Officer': ['Officer A', 'Officer B'],
         'Is_790_Charge': [True, False],
+        'Is_790_07_Any': [True, False],
         'Race_Display': ['Black', 'White'],
+        'Race_Tier_1': ['B', 'W'],
         'Gender_Display': ['Male', 'Female'],
         'Age_Group': ['18-25', '26-35']
     })
@@ -377,16 +463,31 @@ app.layout = html.Div([
     ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '10px',
               'margin': '20px'}),
     
-    # Main chart
+    # Age Groups with Race Breakdown
     html.Div([
+        html.H4("Age Groups by Race", style={'color': '#2c3e50', 'marginBottom': '15px'}),
+        dcc.Graph(id='age-race-chart', style={'height': '400px'})
+    ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '10px',
+              'margin': '20px'}),
+    
+    # Officer Analysis Section
+    html.Div([
+        html.H4("Officer Charging Patterns - All 790.07 Charges", style={'color': '#2c3e50', 'marginBottom': '15px'}),
+        dcc.Graph(id='officer-analysis-chart', style={'height': '500px'})
+    ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '10px',
+              'margin': '20px'}),
+    
+    # Main chart - Secondary Offenses
+    html.Div([
+        html.H4("Secondary Offenses Analysis", style={'color': '#2c3e50', 'marginBottom': '15px'}),
         dcc.Graph(id='related-charges-bar-chart', style={'height': '600px'})
     ], style={'padding': '20px'}),
     
-    # Secondary charges table section
+    # Defendant Charges Table
     html.Div([
-        html.H4("Secondary Charges Detail - Statute & Charge Description Combinations", 
+        html.H4("Defendant Charge Details - First 50 Defendants with 790.07 Charges", 
                 style={'color': '#2c3e50', 'marginBottom': '15px'}),
-        html.Div(id='charges-table-container')
+        html.Div(id='defendant-charges-table-container')
     ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '10px',
               'margin': '20px'}),
     
@@ -412,24 +513,24 @@ app.layout = html.Div([
 # Callback for updating all components
 @app.callback(
     [Output('related-charges-bar-chart', 'figure'),
-     Output('charges-table-container', 'children'),
+     Output('defendant-charges-table-container', 'children'),
      Output('summary-stats', 'children'),
      Output('insights-text', 'children'),
-     Output('demographics-charts', 'figure')],
+     Output('demographics-charts', 'figure'),
+     Output('age-race-chart', 'figure'),
+     Output('officer-analysis-chart', 'figure')],
     [Input('statute-dropdown', 'value'),
      Input('agency-dropdown', 'value')]
 )
 def update_dashboard(selected_statute, selected_agency):
     if not selected_statute:
-        # Return empty chart if no statute selected
-        fig = go.Figure()
-        fig.update_layout(title="Please select a statute from the dropdown", plot_bgcolor='white')
-        demo_fig = go.Figure()
-        demo_fig.update_layout(title="Select a statute to see demographics", plot_bgcolor='white')
-        return fig, html.P("No data to display"), "No statute selected", "Select a statute to see insights", demo_fig
+        # Return empty charts if no statute selected
+        empty_fig = go.Figure()
+        empty_fig.update_layout(title="Please select a statute from the dropdown", plot_bgcolor='white')
+        return empty_fig, html.P("No data to display"), "No statute selected", "Select a statute to see insights", empty_fig, empty_fig, empty_fig
     
     # Get related charges data
-    plot_df, table_df, total_defendants, primary_statute_display, demographics = get_related_charges(
+    plot_df, total_defendants, primary_statute_display, demographics = get_related_charges(
         df, selected_statute, selected_agency
     )
     
@@ -476,115 +577,186 @@ def update_dashboard(selected_statute, selected_agency):
     )
     demo_fig.update_xaxes(tickangle=-45)
     
+    # Create Age-Race stacked bar chart
+    age_race_df = demographics['age_race']
+    
+    # Define colors for races
+    race_colors = {
+        'B': '#1f77b4',  # Blue for Black
+        'W': '#ff7f0e',  # Orange for White
+        'H': '#2ca02c',  # Green for Hispanic
+        'A': '#d62728',  # Red for Asian
+        'O': '#9467bd',  # Purple for Other
+        'U': '#8c564b'   # Brown for Unknown
+    }
+    
+    age_race_fig = go.Figure()
+    
+    # Create stacked bars for each race
+    for race in age_race_df['Race_Tier_1'].unique():
+        race_subset = age_race_df[age_race_df['Race_Tier_1'] == race]
+        age_race_fig.add_trace(go.Bar(
+            x=race_subset['Age_Group'],
+            y=race_subset['Defendant_ID'],
+            name=race,
+            marker_color=race_colors.get(race, '#7f7f7f')
+        ))
+    
+    age_race_fig.update_layout(
+        barmode='stack',
+        title=f"Age Distribution by Race for {primary_statute_display} Defendants",
+        xaxis_title="Age Group",
+        yaxis_title="Number of Defendants",
+        height=400,
+        xaxis={'categoryorder': 'array', 'categoryarray': age_order}
+    )
+    
+    # Officer Analysis
+    officer_data = get_officer_analysis(df)
+    officer_fig = go.Figure()
+    
+    # Show top 20 officers
+    top_officers = officer_data.head(20)
+    
+    # Create stacked bar chart for officers
+    officer_fig.add_trace(go.Bar(
+        x=top_officers['Lead_Officer'],
+        y=top_officers['790_07_Charges'],
+        name='790.07 Charges',
+        marker_color='#e74c3c'
+    ))
+    
+    officer_fig.add_trace(go.Bar(
+        x=top_officers['Lead_Officer'],
+        y=top_officers['Other_Charges'],
+        name='Other Charges',
+        marker_color='#3498db'
+    ))
+    
+    officer_fig.update_layout(
+        barmode='stack',
+        title="Top 20 Officers by Total Charges (790.07 + Related)",
+        xaxis_title="Officer",
+        yaxis_title="Number of Charges",
+        height=500,
+        xaxis_tickangle=-45
+    )
+    
     if len(plot_df) == 0:
         fig = go.Figure()
         fig.update_layout(
             title=f"No secondary charges found for {primary_statute_display}",
             plot_bgcolor='white'
         )
-        return fig, html.P("No secondary charges to display"), f"Total defendants with {primary_statute_display}: {total_defendants}", "No secondary charges to analyze", demo_fig
-    
-    # Create the bar chart showing unique defendant counts
-    fig = go.Figure()
-    
-    # Limit to top 20 for readability
-    plot_df_chart = plot_df.head(20)
-    
-    # Create bars
-    fig.add_trace(go.Bar(
-        x=plot_df_chart['Statute'],
-        y=plot_df_chart['Unique_Defendants'],
-        text=plot_df_chart['Unique_Defendants'].astype(str),
-        textposition='outside',
-        hovertext=plot_df_chart['Hover_Text'],
-        hoverinfo='text',
-        marker_color='#3498db',
-        name='Unique Defendants'
-    ))
-    
-    # Update layout
-    agency_filter_text = f" (Agency: {selected_agency})" if selected_agency != 'All Agencies' else ""
-    fig.update_layout(
-        title={
-            'text': f"Secondary Offenses for Defendants with {primary_statute_display} Charges{agency_filter_text}<br>" +
-                   f"<span style='font-size: 14px; color: gray;'>Total Defendants with {primary_statute_display}: {total_defendants}</span>",
-            'x': 0.5,
-            'xanchor': 'center'
-        },
-        xaxis_title="Related Statute",
-        yaxis_title="Number of Unique Defendants",
-        showlegend=False,
-        hovermode='x unified',
-        plot_bgcolor='white',
-        xaxis=dict(
-            tickangle=-45,
-            gridcolor='lightgray',
-            gridwidth=0.5
-        ),
-        yaxis=dict(
-            gridcolor='lightgray',
-            gridwidth=0.5
-        ),
-        height=600
-    )
-    
-    # Create the table showing statute + charge description combinations
-    table_df['ChargeOffenseDescription_Display'] = table_df['ChargeOffenseDescription'].apply(
-        lambda x: x[:100] + '...' if len(str(x)) > 100 else x
-    )
-    
-    # Create the table
-    charges_table = dash_table.DataTable(
-        id='charges-detail-table',
-        columns=[
-            {'name': 'Statute', 'id': 'Statute'},
-            {'name': 'Charge Description', 'id': 'ChargeOffenseDescription_Display'},
-            {'name': 'Total Count', 'id': 'Occurrence_Count', 'type': 'numeric'},
-            {'name': 'Unique Defendants', 'id': 'Unique_Defendants', 'type': 'numeric'}
-        ],
-        data=table_df.to_dict('records'),
-        style_cell={
-            'textAlign': 'left',
-            'padding': '10px',
-            'whiteSpace': 'normal',
-            'height': 'auto',
-            'minWidth': '50px',
-            'maxWidth': '500px'
-        },
-        style_cell_conditional=[
-            {
-                'if': {'column_id': 'Statute'},
-                'width': '15%'
+        defendant_table = html.P("No secondary charges to display")
+    else:
+        # Create the bar chart showing unique defendant counts for secondary charges
+        fig = go.Figure()
+        
+        # Limit to top 20 for readability
+        plot_df_chart = plot_df.head(20)
+        
+        # Highlight marijuana charges
+        colors = ['#ff6b6b' if '893.13(1)(A)' in statute or '893.13(1)(a)' in statute else '#3498db' 
+                  for statute in plot_df_chart['Statute']]
+        
+        fig.add_trace(go.Bar(
+            x=plot_df_chart['Statute'],
+            y=plot_df_chart['Unique_Defendants'],
+            text=plot_df_chart['Unique_Defendants'].astype(str),
+            textposition='outside',
+            hovertext=plot_df_chart['Hover_Text'],
+            hoverinfo='text',
+            marker_color=colors,
+            name='Unique Defendants'
+        ))
+        
+        # Update layout
+        agency_filter_text = f" (Agency: {selected_agency})" if selected_agency != 'All Agencies' else ""
+        fig.update_layout(
+            title={
+                'text': f"Secondary Offenses for Defendants with {primary_statute_display} Charges{agency_filter_text}<br>" +
+                       f"<span style='font-size: 14px; color: gray;'>Total Defendants with {primary_statute_display}: {total_defendants}</span>",
+                'x': 0.5,
+                'xanchor': 'center'
             },
-            {
-                'if': {'column_id': 'ChargeOffenseDescription_Display'},
-                'width': '55%'
+            xaxis_title="Related Statute",
+            yaxis_title="Number of Unique Defendants",
+            showlegend=False,
+            hovermode='x unified',
+            plot_bgcolor='white',
+            xaxis=dict(
+                tickangle=-45,
+                gridcolor='lightgray',
+                gridwidth=0.5
+            ),
+            yaxis=dict(
+                gridcolor='lightgray',
+                gridwidth=0.5
+            ),
+            height=600
+        )
+        
+        # Create defendant charges table
+        defendant_table_df = get_defendant_charges_table(df)
+        
+        # Create the table
+        defendant_table = dash_table.DataTable(
+            id='defendant-charges-detail-table',
+            columns=[
+                {'name': 'Defendant', 'id': 'Defendant'},
+                {'name': 'Officer', 'id': 'Officer'},
+                {'name': 'Total Charges', 'id': 'Total_Charges', 'type': 'numeric'},
+                {'name': 'Charge 1', 'id': 'Charge_1'},
+                {'name': 'Charge 2', 'id': 'Charge_2'},
+                {'name': 'Charge 3', 'id': 'Charge_3'},
+                {'name': 'Charge 4', 'id': 'Charge_4'},
+                {'name': 'Charge 5', 'id': 'Charge_5'}
+            ],
+            data=defendant_table_df.to_dict('records'),
+            style_cell={
+                'textAlign': 'left',
+                'padding': '10px',
+                'whiteSpace': 'normal',
+                'height': 'auto',
+                'minWidth': '80px',
+                'maxWidth': '200px'
             },
-            {
-                'if': {'column_id': 'Occurrence_Count'},
-                'width': '15%',
-                'textAlign': 'center'
+            style_cell_conditional=[
+                {
+                    'if': {'column_id': 'Defendant'},
+                    'width': '15%'
+                },
+                {
+                    'if': {'column_id': 'Officer'},
+                    'width': '15%'
+                },
+                {
+                    'if': {'column_id': 'Total_Charges'},
+                    'width': '10%',
+                    'textAlign': 'center'
+                }
+            ],
+            style_data_conditional=[
+                {
+                    'if': {'row_index': 'odd'},
+                    'backgroundColor': 'rgb(248, 248, 248)'
+                },
+                {
+                    'if': {
+                        'filter_query': '{Charge_1} contains "893.13"'
+                    },
+                    'backgroundColor': '#ffe6e6'
+                }
+            ],
+            style_header={
+                'backgroundColor': 'rgb(230, 230, 230)',
+                'fontWeight': 'bold'
             },
-            {
-                'if': {'column_id': 'Unique_Defendants'},
-                'width': '15%',
-                'textAlign': 'center'
-            }
-        ],
-        style_data_conditional=[
-            {
-                'if': {'row_index': 'odd'},
-                'backgroundColor': 'rgb(248, 248, 248)'
-            }
-        ],
-        style_header={
-            'backgroundColor': 'rgb(230, 230, 230)',
-            'fontWeight': 'bold'
-        },
-        page_size=15,
-        style_table={'height': '450px', 'overflowY': 'auto'},
-        sort_action="native"
-    )
+            page_size=20,
+            style_table={'height': '600px', 'overflowY': 'auto'},
+            sort_action="native"
+        )
     
     # Create summary statistics
     summary_html = html.Div([
@@ -639,7 +811,25 @@ def update_dashboard(selected_statute, selected_agency):
                 f"Young adults (18-35) account for {young_adult_pct}% of defendants"
             ]))
     
-    # Top secondary charges (existing)
+    # Officer patterns
+    if len(officer_data) > 0:
+        top_officer = officer_data.iloc[0]
+        insights.append(html.Li([
+            html.Strong("Top Charging Officer: "),
+            f"{top_officer['Lead_Officer']} with {top_officer['Total_Charges']} total charges "
+            f"({top_officer['790_07_Charges']} are 790.07 charges)"
+        ]))
+    
+    # Marijuana charges
+    marijuana_charges = plot_df[plot_df['Statute'].str.contains('893.13', na=False)]
+    if len(marijuana_charges) > 0:
+        marijuana_defendants = marijuana_charges['Unique_Defendants'].sum()
+        insights.append(html.Li([
+            html.Strong("Marijuana Connection: "),
+            f"{marijuana_defendants} defendants have marijuana charges (893.13) along with {primary_statute_display}"
+        ]))
+    
+    # Top secondary charges
     if len(plot_df) >= 3:
         top_3 = plot_df.head(3)
         insights.append(html.Li([
@@ -650,18 +840,9 @@ def update_dashboard(selected_statute, selected_agency):
             ])
         ]))
     
-    # Drug-related charges analysis (existing)
-    drug_charges = plot_df[plot_df['Statute'].str.startswith('893', na=False)]
-    if len(drug_charges) > 0:
-        total_drug_defendants = drug_charges['Unique_Defendants'].sum()
-        insights.append(html.Li([
-            html.Strong("Drug-Firearm Nexus: "),
-            f"{total_drug_defendants} defendants have drug charges"
-        ]))
-    
     insights_div = html.Ul(insights) if insights else html.P("Insufficient data for detailed pattern analysis")
     
-    return fig, charges_table, summary_html, insights_div, demo_fig
+    return fig, defendant_table, summary_html, insights_div, demo_fig, age_race_fig, officer_fig
 
 # Run the app
 if __name__ == '__main__':
