@@ -99,7 +99,9 @@ def load_and_prepare_data(filepath):
                                  bins=[0, 18, 25, 35, 45, 55, 100],
                                  labels=['Under 18', '18-25', '26-35', '36-45', '46-55', '56+'],
                                  right=False)
-        df['Age_Group'] = df['Age_Group'].fillna('Unknown')
+        # Convert to string to handle missing values
+        df['Age_Group'] = df['Age_Group'].astype(str)
+        df['Age_Group'] = df['Age_Group'].replace('nan', 'Unknown')
     else:
         df['Age_Group'] = 'Unknown'
     
@@ -200,11 +202,17 @@ def get_related_charges(df, selected_statute, selected_agency=None):
 try:
     # Try loading from the same directory first
     if os.path.exists('790.07.csv'):
+        print("Loading data from 790.07.csv...")
         df = load_and_prepare_data('790.07.csv')
+        print(f"Data loaded successfully: {len(df)} rows, {len(df.columns)} columns")
     elif os.path.exists('./790.07.csv'):
+        print("Loading data from ./790.07.csv...")
         df = load_and_prepare_data('./790.07.csv')
+        print(f"Data loaded successfully: {len(df)} rows, {len(df.columns)} columns")
     elif os.path.exists('../790.07.csv'):
+        print("Loading data from ../790.07.csv...")
         df = load_and_prepare_data('../790.07.csv')
+        print(f"Data loaded successfully: {len(df)} rows, {len(df.columns)} columns")
     else:
         # If file not found, create sample data for demonstration
         print("Warning: CSV file not found. Using sample data for demonstration.")
@@ -249,8 +257,11 @@ try:
         df = pd.DataFrame(sample_records)
         # Apply preparation
         df = load_and_prepare_data(df)
+        print(f"Sample data created: {len(df)} rows")
 except Exception as e:
     print(f"Error loading data: {e}")
+    import traceback
+    traceback.print_exc()
     # Create minimal sample data if all else fails
     df = pd.DataFrame({
         'Defendant_ID': ['ID_001', 'ID_002'],
@@ -263,6 +274,7 @@ except Exception as e:
         'Gender_Display': ['Male', 'Female'],
         'Age_Group': ['18-25', '26-35']
     })
+    print("Using minimal fallback data")
 
 # Get unique 790 statutes for dropdown - add combined option
 statute_790_list = ['All 790.07', '790.07(1)', '790.07(2)'] + sorted([s for s in df[df['Is_790_Charge']]['Statute'].unique() 
