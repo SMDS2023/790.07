@@ -406,10 +406,11 @@ statute_790_list = ['All 790.07', '790.07(1)', '790.07(2)'] + sorted([s for s in
 # Get unique agencies for dropdown
 agency_list = ['All Agencies'] + sorted(df['Lead_Agency'].unique())
 
-# Add external stylesheets and inline CSS
-app = dash.Dash(__name__, external_stylesheets=[
-    'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
-])
+# Initialize the Dash app
+app = dash.Dash(__name__)
+
+# CRITICAL: This exposes the Flask server for Gunicorn
+server = app.server
 
 # Define the app layout with Lotter Law styling
 app.layout = html.Div([
@@ -567,6 +568,7 @@ app.layout = html.Div([
      Input('agency-dropdown', 'value')]
 )
 def update_dashboard(selected_statute, selected_agency):
+    try:
     if not selected_statute:
         # Return empty charts if no statute selected
         empty_fig = go.Figure()
