@@ -406,153 +406,29 @@ statute_790_list = ['All 790.07', '790.07(1)', '790.07(2)'] + sorted([s for s in
 # Get unique agencies for dropdown
 agency_list = ['All Agencies'] + sorted(df['Lead_Agency'].unique())
 
-# Define custom CSS inspired by Lotter Law website
-custom_css = """
-/* Custom styles inspired by Lotter Law website */
-body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #f8f9fa;
-}
-
-/* Header styling */
-.main-header {
-    background-color: #ffffff;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    padding: 20px 0;
-    margin-bottom: 30px;
-}
-
-.header-content {
-    text-align: center;
-}
-
-.header-title {
-    color: #2c3e50;
-    font-size: 2.5rem;
-    font-weight: 700;
-    margin: 0 0 10px 0;
-}
-
-.header-subtitle {
-    color: #7f8c8d;
-    font-size: 1.2rem;
-    margin: 0;
-}
-
-.header-contact {
-    color: #3498db;
-    font-size: 1rem;
-    margin-top: 5px;
-}
-
-/* Control panel styling */
-.control-panel {
-    background-color: #ffffff;
-    border-radius: 10px;
-    padding: 20px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    margin-bottom: 30px;
-}
-
-/* Section styling */
-.dashboard-section {
-    background-color: #ffffff;
-    border-radius: 10px;
-    padding: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-.section-title {
-    color: #2c3e50;
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin-bottom: 15px;
-}
-
-/* Dropdown styling */
-.Select-control {
-    border-color: #e0e0e0 !important;
-    border-radius: 8px !important;
-}
-
-.Select-control:hover {
-    border-color: #3498db !important;
-}
-
-/* DataTable styling */
-.dash-table-container {
-    font-family: 'Inter', sans-serif;
-}
-
-.dash-spreadsheet-container .dash-spreadsheet-inner th {
-    background-color: #f8f9fa !important;
-    color: #2c3e50 !important;
-    font-weight: 600 !important;
-    border-bottom: 2px solid #e0e0e0 !important;
-}
-
-/* Footer styling */
-.footer {
-    background-color: #2c3e50;
-    color: #ecf0f1;
-    padding: 20px;
-    text-align: center;
-    margin-top: 40px;
-}
-
-/* Button styling */
-.btn-primary {
-    background-color: #3498db;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 8px;
-    text-decoration: none;
-    transition: background-color 0.3s;
-}
-
-.btn-primary:hover {
-    background-color: #2980b9;
-}
-
-/* Insights styling */
-.insight-item {
-    padding: 10px 0;
-    border-bottom: 1px solid #ecf0f1;
-}
-
-.insight-item:last-child {
-    border-bottom: none;
-}
-
-.insight-strong {
-    color: #2c3e50;
-    font-weight: 600;
-}
-
-/* Disclaimer box */
-.disclaimer-box {
-    background-color: #f8f9fa;
-    border-left: 4px solid #3498db;
-    padding: 15px;
-    margin-bottom: 20px;
-    border-radius: 5px;
-}
-"""
+# Add external stylesheets and inline CSS
+app = dash.Dash(__name__, external_stylesheets=[
+    'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
+])
 
 # Define the app layout with Lotter Law styling
 app.layout = html.Div([
-    # Include custom CSS
-    html.Style(custom_css),
     
     # Header
     html.Div([
         html.Div([
-            html.H1("790 Charges Analysis Dashboard", className="header-title"),
-            html.H3("Analyzing Related Offenses for Firearm Possession Charges", className="header-subtitle"),
-            html.P("Lotter Law | Call or Text: 407-500-7000", className="header-contact")
-        ], className="header-content")
-    ], className="main-header"),
+            html.H1("790 Charges Analysis Dashboard", 
+                    style={'color': '#2c3e50', 'fontSize': '2.5rem', 'fontWeight': '700', 
+                           'margin': '0 0 10px 0', 'fontFamily': 'Inter, sans-serif'}),
+            html.H3("Analyzing Related Offenses for Firearm Possession Charges", 
+                    style={'color': '#7f8c8d', 'fontSize': '1.2rem', 'margin': '0', 
+                           'fontFamily': 'Inter, sans-serif'}),
+            html.P("Lotter Law | Call or Text: 407-500-7000", 
+                   style={'color': '#3498db', 'fontSize': '1rem', 'marginTop': '5px', 
+                          'fontFamily': 'Inter, sans-serif'})
+        ], style={'textAlign': 'center'})
+    ], style={'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)', 
+              'padding': '20px 0', 'marginBottom': '30px'}),
     
     # Container
     html.Div([
@@ -584,7 +460,8 @@ app.layout = html.Div([
                             "This dashboard is designed to identify enforcement trends and potential disparities in the "
                             "application of firearm possession charges, supporting data-driven criminal justice reform efforts."
                         ])
-                    ], className="disclaimer-box")
+                    ], style={'backgroundColor': '#f8f9fa', 'borderLeft': '4px solid #3498db', 
+                             'padding': '15px', 'marginBottom': '20px', 'borderRadius': '5px'})
                 ], style={'marginTop': '10px'})
             ])
         ], style={'marginBottom': '30px'}),
@@ -621,56 +498,61 @@ app.layout = html.Div([
             
             # Summary statistics
             html.Div(id='summary-stats')
-        ], className="control-panel"),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'boxShadow': '0 2px 8px rgba(0,0,0,0.1)', 'marginBottom': '30px'}),
         
         # Demographics Section
         html.Div([
-            html.H4("Demographic Analysis", className="section-title"),
+            html.H4("Demographic Analysis", style={'color': '#2c3e50', 'fontSize': '1.5rem', 
+                                                   'fontWeight': '600', 'marginBottom': '15px'}),
             dcc.Graph(id='demographics-charts', style={'height': '400px'})
-        ], className="dashboard-section"),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'marginBottom': '20px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.1)'}),
         
         # Age Groups with Race Breakdown
         html.Div([
-            html.H4("Age Groups by Race", className="section-title"),
+            html.H4("Age Groups by Race", style={'color': '#2c3e50', 'fontSize': '1.5rem', 
+                                                  'fontWeight': '600', 'marginBottom': '15px'}),
             dcc.Graph(id='age-race-chart', style={'height': '400px'})
-        ], className="dashboard-section"),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'marginBottom': '20px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.1)'}),
         
         # Officer Analysis Section
         html.Div([
-            html.H4("Officer Charging Patterns - All 790.07 Charges", className="section-title"),
+            html.H4("Officer Charging Patterns - All 790.07 Charges", 
+                    style={'color': '#2c3e50', 'fontSize': '1.5rem', 
+                           'fontWeight': '600', 'marginBottom': '15px'}),
             dcc.Graph(id='officer-analysis-chart', style={'height': '500px'})
-        ], className="dashboard-section"),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'marginBottom': '20px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.1)'}),
         
         # Main chart - Secondary Offenses
         html.Div([
-            html.H4("Secondary Offenses Analysis", className="section-title"),
+            html.H4("Secondary Offenses Analysis", style={'color': '#2c3e50', 'fontSize': '1.5rem', 
+                                                          'fontWeight': '600', 'marginBottom': '15px'}),
             dcc.Graph(id='related-charges-bar-chart', style={'height': '600px'})
-        ], className="dashboard-section"),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'marginBottom': '20px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.1)'}),
         
         # Defendant Charges Table
         html.Div([
-            html.H4("Defendant Charge Details - First 50 Defendants with 790.07 Charges", className="section-title"),
+            html.H4("Defendant Charge Details - First 50 Defendants with 790.07 Charges", 
+                    style={'color': '#2c3e50', 'fontSize': '1.5rem', 
+                           'fontWeight': '600', 'marginBottom': '15px'}),
             html.Div(id='defendant-charges-table-container')
-        ], className="dashboard-section"),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'marginBottom': '20px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.1)'}),
         
         # Additional insights
         html.Div([
-            html.H4("Key Insights", className="section-title"),
+            html.H4("Key Insights", style={'color': '#2c3e50', 'fontSize': '1.5rem', 
+                                           'fontWeight': '600', 'marginBottom': '15px'}),
             html.Div(id='insights-text')
-        ], className="dashboard-section")
-    ], style={'maxWidth': '1400px', 'margin': '0 auto', 'padding': '0 20px'}),
+        ], style={'backgroundColor': '#ffffff', 'borderRadius': '10px', 'padding': '20px', 
+                  'marginBottom': '20px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.1)'})
+    ], style={'maxWidth': '1400px', 'margin': '0 auto', 'padding': '0 20px'})
     
-    # Footer
-    html.Div([
-        html.Hr(style={'borderColor': '#ecf0f1', 'margin': '40px 0 20px 0'}),
-        html.P([
-            "© 2024 Lotter Law | ",
-            html.A("407-500-7000", href="tel:407-500-7000", style={'color': '#3498db', 'textDecoration': 'none'}),
-            " | Data contains ", f"{len(df)}", " total charges from ", 
-            f"{len(df['Defendant_ID'].unique())}", " unique defendants"
-        ], style={'textAlign': 'center', 'color': '#7f8c8d', 'fontSize': '0.9rem'})
-    ], className="footer")
-])
+], style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'fontFamily': 'Inter, sans-serif'})
 
 # Callback for updating all components
 @app.callback(
@@ -964,18 +846,18 @@ def update_dashboard(selected_statute, selected_agency):
         race_df = race_df.sort_values('Percentage', ascending=False)
         
         insights.append(html.Div([
-            html.Span("Racial Distribution: ", className="insight-strong"),
+            html.Span("Racial Distribution: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
             ', '.join([f"{row['Race']}: {row['Count']} ({row['Percentage']}%)" 
                       for _, row in race_df.head(3).iterrows()])
-        ], className="insight-item"))
+        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
         
         # Check for potential disparities
         if race_df.iloc[0]['Percentage'] > 60:
             insights.append(html.Div([
-                html.Span("⚠️ Potential Disparate Impact: ", className="insight-strong"),
+                html.Span("⚠️ Potential Disparate Impact: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
                 html.Span(f"{race_df.iloc[0]['Race']} defendants represent {race_df.iloc[0]['Percentage']}% "
                          f"of {primary_statute_display} charges", style={'color': '#e74c3c'})
-            ], className="insight-item"))
+            ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
     
     # Age patterns
     if demographics['age']:
@@ -984,38 +866,38 @@ def update_dashboard(selected_statute, selected_agency):
         young_adult_pct = round(young_adult_count / total_defendants * 100, 1)
         if young_adult_pct > 60:
             insights.append(html.Div([
-                html.Span("Age Pattern: ", className="insight-strong"),
+                html.Span("Age Pattern: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
                 f"Young adults (18-35) account for {young_adult_pct}% of defendants"
-            ], className="insight-item"))
+            ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
     
     # Officer patterns
     if len(officer_data) > 0:
         top_officer = officer_data.iloc[0]
         insights.append(html.Div([
-            html.Span("Top Charging Officer: ", className="insight-strong"),
+            html.Span("Top Charging Officer: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
             f"{top_officer['Lead_Officer']} with {top_officer['Total_Charges']} total charges "
             f"({top_officer['790_07_Charges']} are 790.07 charges)"
-        ], className="insight-item"))
+        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
     
     # Marijuana charges
     marijuana_charges = plot_df[plot_df['Statute'].str.contains('893.13', na=False)]
     if len(marijuana_charges) > 0:
         marijuana_defendants = marijuana_charges['Unique_Defendants'].sum()
         insights.append(html.Div([
-            html.Span("Marijuana Connection: ", className="insight-strong"),
+            html.Span("Marijuana Connection: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
             f"{marijuana_defendants} defendants have marijuana charges (893.13) along with {primary_statute_display}"
-        ], className="insight-item"))
+        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
     
     # Top secondary charges
     if len(plot_df) >= 3:
         top_3 = plot_df.head(3)
         insights.append(html.Div([
-            html.Span("Top 3 Secondary Charges: ", className="insight-strong"),
+            html.Span("Top 3 Secondary Charges: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
             html.Ol([
                 html.Li(f"{row['Display_Description']} ({row['Statute']}) - {row['Unique_Defendants']} defendants") 
                 for _, row in top_3.iterrows()
             ], style={'marginTop': '5px', 'marginBottom': '0'})
-        ], className="insight-item"))
+        ], style={'padding': '10px 0'}))
     
     insights_div = html.Div(insights) if insights else html.P("Insufficient data for detailed pattern analysis")
     
