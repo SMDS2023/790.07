@@ -250,10 +250,16 @@ def get_defendant_charges_table(df):
             'Charges': ', '.join(charge_list[:5])  # Show first 5 charges
         }
         
-        # Add specific charge columns
+        # Add specific charge columns with descriptions
         for i, (_, charge) in enumerate(charges.iterrows()):
             if i < 5:  # Limit to 5 charges for display
-                row[f'Charge_{i+1}'] = f"{charge['Statute']} ({charge['OffenseDate'].strftime('%Y-%m-%d') if pd.notna(charge['OffenseDate']) else 'N/A'})"
+                # Get the description, truncate if too long
+                desc = charge['ChargeOffenseDescription'] if pd.notna(charge['ChargeOffenseDescription']) else charge['Statute_Description']
+                if len(str(desc)) > 50:
+                    desc = str(desc)[:50] + '...'
+                
+                date_str = charge['OffenseDate'].strftime('%m/%d/%Y') if pd.notna(charge['OffenseDate']) else 'N/A'
+                row[f'Charge_{i+1}'] = f"{desc} ({date_str})"
         
         defendant_summary.append(row)
     
