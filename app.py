@@ -455,12 +455,6 @@ statute_790_list = ['All 790.07', '790.07(1)', '790.07(2)'] + sorted([s for s in
 # Get unique agencies for dropdown
 agency_list = ['All Agencies'] + sorted(df['Lead_Agency'].unique())
 
-# Initialize the Dash app
-app = dash.Dash(__name__)
-
-# CRITICAL: This exposes the Flask server for Gunicorn
-server = app.server
-
 # Define the app layout with Lotter Law styling
 app.layout = html.Div([
     
@@ -529,13 +523,7 @@ app.layout = html.Div([
                         value='790.07(2)',  # Default to 790.07(2) as requested
                         placeholder="Select a 790 statute...",
                         style={'width': '100%'}
-                        )
-            ])
-        else:
-            defendant_table = html.Div([
-                table_info,
-                html.P("No defendants found matching the criteria", style={'color': '#7f8c8d', 'fontStyle': 'italic'})
-            ])
+                    )
                 ], style={'flex': '1', 'marginRight': '20px'}),
                 
                 # Agency dropdown
@@ -626,357 +614,363 @@ app.layout = html.Div([
 )
 def update_dashboard(selected_statute, selected_agency):
     try:
-    if not selected_statute:
-        # Return empty charts if no statute selected
-        empty_fig = go.Figure()
-        empty_fig.update_layout(title="Please select a statute from the dropdown", plot_bgcolor='white')
-        return empty_fig, html.P("No data to display"), "No statute selected", "Select a statute to see insights", empty_fig, empty_fig, empty_fig
-    
-    # Get related charges data
-    plot_df, total_defendants, primary_statute_display, demographics = get_related_charges(
-        df, selected_statute, selected_agency
-    )
-    
-    # Create demographics charts with Lotter Law color scheme
-    demo_fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=('Race', 'Gender', 'Age Group'),
-        specs=[[{'type': 'bar'}, {'type': 'bar'}, {'type': 'bar'}]]
-    )
-    
-    # Race chart
-    race_data = pd.DataFrame(list(demographics['race'].items()), columns=['Race', 'Count'])
-    race_data = race_data.sort_values('Count', ascending=False)
-    demo_fig.add_trace(
-        go.Bar(x=race_data['Race'], y=race_data['Count'], name='Race',
-               marker_color='#3498db', showlegend=False),
-        row=1, col=1
-    )
-    
-    # Gender chart
-    gender_data = pd.DataFrame(list(demographics['gender'].items()), columns=['Gender', 'Count'])
-    gender_data = gender_data.sort_values('Count', ascending=False)
-    demo_fig.add_trace(
-        go.Bar(x=gender_data['Gender'], y=gender_data['Count'], name='Gender',
-               marker_color='#e74c3c', showlegend=False),
-        row=1, col=2
-    )
-    
-    # Age chart
-    age_data = pd.DataFrame(list(demographics['age'].items()), columns=['Age Group', 'Count'])
-    age_order = ['Under 18', '18-25', '26-35', '36-45', '46-55', '56+', 'Unknown']
-    age_data['Age Group'] = pd.Categorical(age_data['Age Group'], categories=age_order, ordered=True)
-    age_data = age_data.sort_values('Age Group')
-    demo_fig.add_trace(
-        go.Bar(x=age_data['Age Group'], y=age_data['Count'], name='Age',
-               marker_color='#2ecc71', showlegend=False),
-        row=1, col=3
-    )
-    
-    demo_fig.update_layout(
-        height=400,
-        title_text=f"Demographics of Defendants with {primary_statute_display} Charges",
-        showlegend=False,
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        font=dict(family="Inter, sans-serif")
-    )
-    demo_fig.update_xaxes(tickangle=-45)
-    
-    # Create Age-Race stacked bar chart
-    age_race_df = demographics['age_race']
-    
-    # Define colors for races
-    race_colors = {
-        'B': '#1f77b4',  # Blue for Black
-        'W': '#ff7f0e',  # Orange for White
-        'H': '#2ca02c',  # Green for Hispanic
-        'A': '#d62728',  # Red for Asian
-        'O': '#9467bd',  # Purple for Other
-        'U': '#8c564b'   # Brown for Unknown
-    }
-    
-    age_race_fig = go.Figure()
-    
-    # Create stacked bars for each race
-    for race in age_race_df['Race_Tier_1'].unique():
-        race_subset = age_race_df[age_race_df['Race_Tier_1'] == race]
-        age_race_fig.add_trace(go.Bar(
-            x=race_subset['Age_Group'],
-            y=race_subset['Defendant_ID'],
-            name=race,
-            marker_color=race_colors.get(race, '#7f7f7f')
-        ))
-    
-    age_race_fig.update_layout(
-        barmode='stack',
-        title=f"Age Distribution by Race for {primary_statute_display} Defendants",
-        xaxis_title="Age Group",
-        yaxis_title="Number of Defendants",
-        height=400,
-        xaxis={'categoryorder': 'array', 'categoryarray': age_order},
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        font=dict(family="Inter, sans-serif")
-    )
-    
-    # Officer Analysis
-    officer_data = get_officer_analysis(df)
-    officer_fig = go.Figure()
-    
-    # Show top 20 officers
-    top_officers = officer_data.head(20)
-    
-    # Create stacked bar chart for officers
-    officer_fig.add_trace(go.Bar(
-        x=top_officers['Lead_Officer'],
-        y=top_officers['790_07_Charges'],
-        name='790.07 Charges',
-        marker_color='#e74c3c'
-    ))
-    
-    officer_fig.add_trace(go.Bar(
-        x=top_officers['Lead_Officer'],
-        y=top_officers['Other_Charges'],
-        name='Other Charges',
-        marker_color='#3498db'
-    ))
-    
-    officer_fig.update_layout(
-        barmode='stack',
-        title="Top 20 Officers by Total Charges (790.07 + Related)",
-        xaxis_title="Officer",
-        yaxis_title="Number of Charges",
-        height=500,
-        xaxis_tickangle=-45,
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        font=dict(family="Inter, sans-serif")
-    )
-    
-    if len(plot_df) == 0:
-        fig = go.Figure()
-        fig.update_layout(
-            title=f"No secondary charges found for {primary_statute_display}",
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter, sans-serif")
+        if not selected_statute:
+            # Return empty charts if no statute selected
+            empty_fig = go.Figure()
+            empty_fig.update_layout(title="Please select a statute from the dropdown", plot_bgcolor='white')
+            return empty_fig, html.P("No data to display"), "No statute selected", "Select a statute to see insights", empty_fig, empty_fig, empty_fig
+        
+        # Get related charges data
+        plot_df, total_defendants, primary_statute_display, demographics = get_related_charges(
+            df, selected_statute, selected_agency
         )
-        defendant_table = html.P("No secondary charges to display")
-    else:
-        # Create the bar chart showing unique defendant counts for secondary charges
-        fig = go.Figure()
         
-        # Limit to top 20 for readability
-        plot_df_chart = plot_df.head(20).copy()
+        # Create demographics charts with Lotter Law color scheme
+        demo_fig = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=('Race', 'Gender', 'Age Group'),
+            specs=[[{'type': 'bar'}, {'type': 'bar'}, {'type': 'bar'}]]
+        )
         
-        # Highlight marijuana charges with different color
-        colors = ['#ff6b6b' if '893.13' in statute else '#3498db' 
-                  for statute in plot_df_chart['Statute']]
+        # Race chart
+        race_data = pd.DataFrame(list(demographics['race'].items()), columns=['Race', 'Count'])
+        race_data = race_data.sort_values('Count', ascending=False)
+        demo_fig.add_trace(
+            go.Bar(x=race_data['Race'], y=race_data['Count'], name='Race',
+                   marker_color='#3498db', showlegend=False),
+            row=1, col=1
+        )
         
-        fig.add_trace(go.Bar(
-            x=plot_df_chart['Display_Description'],  # Use cleaned descriptions
-            y=plot_df_chart['Unique_Defendants'],
-            text=plot_df_chart['Unique_Defendants'].astype(str),
-            textposition='outside',
-            hovertext=plot_df_chart['Hover_Text'],
-            hoverinfo='text',
-            marker_color=colors,
-            name='Unique Defendants'
-        ))
+        # Gender chart
+        gender_data = pd.DataFrame(list(demographics['gender'].items()), columns=['Gender', 'Count'])
+        gender_data = gender_data.sort_values('Count', ascending=False)
+        demo_fig.add_trace(
+            go.Bar(x=gender_data['Gender'], y=gender_data['Count'], name='Gender',
+                   marker_color='#e74c3c', showlegend=False),
+            row=1, col=2
+        )
         
-        # Update layout
-        agency_filter_text = f" (Agency: {selected_agency})" if selected_agency != 'All Agencies' else ""
-        fig.update_layout(
-            title={
-                'text': f"Secondary Offenses for Defendants with {primary_statute_display} Charges{agency_filter_text}<br>" +
-                       f"<span style='font-size: 14px; color: gray;'>Total Defendants with {primary_statute_display}: {total_defendants}</span>",
-                'x': 0.5,
-                'xanchor': 'center'
-            },
-            xaxis_title="Charge Description",
-            yaxis_title="Number of Unique Defendants",
+        # Age chart
+        age_data = pd.DataFrame(list(demographics['age'].items()), columns=['Age Group', 'Count'])
+        age_order = ['Under 18', '18-25', '26-35', '36-45', '46-55', '56+', 'Unknown']
+        age_data['Age Group'] = pd.Categorical(age_data['Age Group'], categories=age_order, ordered=True)
+        age_data = age_data.sort_values('Age Group')
+        demo_fig.add_trace(
+            go.Bar(x=age_data['Age Group'], y=age_data['Count'], name='Age',
+                   marker_color='#2ecc71', showlegend=False),
+            row=1, col=3
+        )
+        
+        demo_fig.update_layout(
+            height=400,
+            title_text=f"Demographics of Defendants with {primary_statute_display} Charges",
             showlegend=False,
-            hovermode='x unified',
             plot_bgcolor='white',
             paper_bgcolor='white',
-            xaxis=dict(
-                tickangle=-45,
-                gridcolor='lightgray',
-                gridwidth=0.5
-            ),
-            yaxis=dict(
-                gridcolor='lightgray',
-                gridwidth=0.5
-            ),
-            height=600,
+            font=dict(family="Inter, sans-serif")
+        )
+        demo_fig.update_xaxes(tickangle=-45)
+        
+        # Create Age-Race stacked bar chart
+        age_race_df = demographics['age_race']
+        
+        # Define colors for races
+        race_colors = {
+            'B': '#1f77b4',  # Blue for Black
+            'W': '#ff7f0e',  # Orange for White
+            'H': '#2ca02c',  # Green for Hispanic
+            'A': '#d62728',  # Red for Asian
+            'O': '#9467bd',  # Purple for Other
+            'U': '#8c564b'   # Brown for Unknown
+        }
+        
+        age_race_fig = go.Figure()
+        
+        # Create stacked bars for each race
+        for race in age_race_df['Race_Tier_1'].unique():
+            race_subset = age_race_df[age_race_df['Race_Tier_1'] == race]
+            age_race_fig.add_trace(go.Bar(
+                x=race_subset['Age_Group'],
+                y=race_subset['Defendant_ID'],
+                name=race,
+                marker_color=race_colors.get(race, '#7f7f7f')
+            ))
+        
+        age_race_fig.update_layout(
+            barmode='stack',
+            title=f"Age Distribution by Race for {primary_statute_display} Defendants",
+            xaxis_title="Age Group",
+            yaxis_title="Number of Defendants",
+            height=400,
+            xaxis={'categoryorder': 'array', 'categoryarray': age_order},
+            plot_bgcolor='white',
+            paper_bgcolor='white',
             font=dict(family="Inter, sans-serif")
         )
         
-        # Create defendant charges table
-        defendant_table_df = get_defendant_charges_table(df)
+        # Officer Analysis
+        officer_data = get_officer_analysis(df)
+        officer_fig = go.Figure()
         
-        # Add count of filtered defendants to table
-        table_info = html.Div([
-            html.P(f"Found {len(defendant_table_df)} defendants with 790.07 + marijuana charges (excluding serious violent offenses)", 
-                   style={'color': '#3498db', 'fontWeight': '600', 'marginBottom': '10px'})
-        ])
+        # Show top 20 officers
+        top_officers = officer_data.head(20)
         
-        # Create the table with Lotter Law styling
-        if len(defendant_table_df) > 0:
-            defendant_table = html.Div([
-                table_info,
-                dash_table.DataTable(
-            id='defendant-charges-detail-table',
-            columns=[
-                {'name': 'Defendant', 'id': 'Defendant'},
-                {'name': 'Officer', 'id': 'Officer'},
-                {'name': 'Total Charges', 'id': 'Total_Charges', 'type': 'numeric'},
-                {'name': 'Charge 1', 'id': 'Charge_1'},
-                {'name': 'Charge 2', 'id': 'Charge_2'},
-                {'name': 'Charge 3', 'id': 'Charge_3'},
-                {'name': 'Charge 4', 'id': 'Charge_4'},
-                {'name': 'Charge 5', 'id': 'Charge_5'}
-            ],
-            data=defendant_table_df.to_dict('records'),
-            style_cell={
-                'textAlign': 'left',
-                'padding': '10px',
-                'whiteSpace': 'normal',
-                'height': 'auto',
-                'minWidth': '80px',
-                'maxWidth': '200px',
-                'fontFamily': 'Inter, sans-serif'
-            },
-            style_cell_conditional=[
-                {
-                    'if': {'column_id': 'Defendant'},
-                    'width': '15%'
-                },
-                {
-                    'if': {'column_id': 'Officer'},
-                    'width': '15%'
-                },
-                {
-                    'if': {'column_id': 'Total_Charges'},
-                    'width': '10%',
-                    'textAlign': 'center'
-                }
-            ],
-            style_data_conditional=[
-                {
-                    'if': {'row_index': 'odd'},
-                    'backgroundColor': '#f8f9fa'
-                },
-                {
-                    'if': {
-                        'filter_query': '{Charge_1} contains "🌿" || {Charge_2} contains "🌿" || {Charge_3} contains "🌿" || {Charge_4} contains "🌿" || {Charge_5} contains "🌿"'
-                    },
-                    'backgroundColor': '#e8f5e9'  # Light green background for rows with marijuana charges
-                }
-            ],
-            style_header={
-                'backgroundColor': '#f8f9fa',
-                'fontWeight': 'bold',
-                'borderBottom': '2px solid #e0e0e0'
-            },
-            page_size=20,
-            style_table={'height': '600px', 'overflowY': 'auto'},
-            sort_action="native"
+        # Create stacked bar chart for officers
+        officer_fig.add_trace(go.Bar(
+            x=top_officers['Lead_Officer'],
+            y=top_officers['790_07_Charges'],
+            name='790.07 Charges',
+            marker_color='#e74c3c'
+        ))
+        
+        officer_fig.add_trace(go.Bar(
+            x=top_officers['Lead_Officer'],
+            y=top_officers['Other_Charges'],
+            name='Other Charges',
+            marker_color='#3498db'
+        ))
+        
+        officer_fig.update_layout(
+            barmode='stack',
+            title="Top 20 Officers by Total Charges (790.07 + Related)",
+            xaxis_title="Officer",
+            yaxis_title="Number of Charges",
+            height=500,
+            xaxis_tickangle=-45,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Inter, sans-serif")
         )
-    
-    # Create summary statistics with improved styling
-    summary_html = html.Div([
-        html.Div([
-            html.Span(f"Total Unique Defendants with {primary_statute_display}: ", 
-                     style={'fontWeight': '600', 'color': '#2c3e50'}),
-            html.Span(f"{total_defendants}", style={'fontSize': '20px', 'color': '#e74c3c', 'fontWeight': 'bold'})
-        ], style={'marginBottom': '8px'}),
-        html.Div([
-            html.Span("Total Unique Secondary Statutes: ", 
-                     style={'fontWeight': '600', 'color': '#2c3e50'}),
-            html.Span(f"{len(plot_df)}", style={'fontSize': '18px', 'color': '#3498db'})
-        ], style={'marginBottom': '8px'}),
-        html.Div([
-            html.Span("Agency Filter: ", 
-                     style={'fontWeight': '600', 'color': '#2c3e50'}),
-            html.Span(selected_agency, style={'color': '#7f8c8d'})
+        
+        if len(plot_df) == 0:
+            fig = go.Figure()
+            fig.update_layout(
+                title=f"No secondary charges found for {primary_statute_display}",
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(family="Inter, sans-serif")
+            )
+            defendant_table = html.P("No secondary charges to display")
+        else:
+            # Create the bar chart showing unique defendant counts for secondary charges
+            fig = go.Figure()
+            
+            # Limit to top 20 for readability
+            plot_df_chart = plot_df.head(20).copy()
+            
+            # Highlight marijuana charges with different color
+            colors = ['#ff6b6b' if '893.13' in statute else '#3498db' 
+                      for statute in plot_df_chart['Statute']]
+            
+            fig.add_trace(go.Bar(
+                x=plot_df_chart['Display_Description'],  # Use cleaned descriptions
+                y=plot_df_chart['Unique_Defendants'],
+                text=plot_df_chart['Unique_Defendants'].astype(str),
+                textposition='outside',
+                hovertext=plot_df_chart['Hover_Text'],
+                hoverinfo='text',
+                marker_color=colors,
+                name='Unique Defendants'
+            ))
+            
+            # Update layout
+            agency_filter_text = f" (Agency: {selected_agency})" if selected_agency != 'All Agencies' else ""
+            fig.update_layout(
+                title={
+                    'text': f"Secondary Offenses for Defendants with {primary_statute_display} Charges{agency_filter_text}<br>" +
+                           f"<span style='font-size: 14px; color: gray;'>Total Defendants with {primary_statute_display}: {total_defendants}</span>",
+                    'x': 0.5,
+                    'xanchor': 'center'
+                },
+                xaxis_title="Charge Description",
+                yaxis_title="Number of Unique Defendants",
+                showlegend=False,
+                hovermode='x unified',
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                xaxis=dict(
+                    tickangle=-45,
+                    gridcolor='lightgray',
+                    gridwidth=0.5
+                ),
+                yaxis=dict(
+                    gridcolor='lightgray',
+                    gridwidth=0.5
+                ),
+                height=600,
+                font=dict(family="Inter, sans-serif")
+            )
+            
+            # Create defendant charges table
+            defendant_table_df = get_defendant_charges_table(df)
+            
+            # Add count of filtered defendants to table
+            table_info = html.Div([
+                html.P(f"Found {len(defendant_table_df)} defendants with 790.07 + marijuana charges (excluding serious violent offenses)", 
+                       style={'color': '#3498db', 'fontWeight': '600', 'marginBottom': '10px'})
+            ])
+            
+            # Create the table with Lotter Law styling
+            if len(defendant_table_df) > 0:
+                defendant_table = html.Div([
+                    table_info,
+                    dash_table.DataTable(
+                        id='defendant-charges-detail-table',
+                        columns=[
+                            {'name': 'Defendant', 'id': 'Defendant'},
+                            {'name': 'Officer', 'id': 'Officer'},
+                            {'name': 'Total Charges', 'id': 'Total_Charges', 'type': 'numeric'},
+                            {'name': 'Charge 1', 'id': 'Charge_1'},
+                            {'name': 'Charge 2', 'id': 'Charge_2'},
+                            {'name': 'Charge 3', 'id': 'Charge_3'},
+                            {'name': 'Charge 4', 'id': 'Charge_4'},
+                            {'name': 'Charge 5', 'id': 'Charge_5'}
+                        ],
+                        data=defendant_table_df.to_dict('records'),
+                        style_cell={
+                            'textAlign': 'left',
+                            'padding': '10px',
+                            'whiteSpace': 'normal',
+                            'height': 'auto',
+                            'minWidth': '80px',
+                            'maxWidth': '200px',
+                            'fontFamily': 'Inter, sans-serif'
+                        },
+                        style_cell_conditional=[
+                            {
+                                'if': {'column_id': 'Defendant'},
+                                'width': '15%'
+                            },
+                            {
+                                'if': {'column_id': 'Officer'},
+                                'width': '15%'
+                            },
+                            {
+                                'if': {'column_id': 'Total_Charges'},
+                                'width': '10%',
+                                'textAlign': 'center'
+                            }
+                        ],
+                        style_data_conditional=[
+                            {
+                                'if': {'row_index': 'odd'},
+                                'backgroundColor': '#f8f9fa'
+                            },
+                            {
+                                'if': {
+                                    'filter_query': '{Charge_1} contains "🌿" || {Charge_2} contains "🌿" || {Charge_3} contains "🌿" || {Charge_4} contains "🌿" || {Charge_5} contains "🌿"'
+                                },
+                                'backgroundColor': '#e8f5e9'  # Light green background for rows with marijuana charges
+                            }
+                        ],
+                        style_header={
+                            'backgroundColor': '#f8f9fa',
+                            'fontWeight': 'bold',
+                            'borderBottom': '2px solid #e0e0e0'
+                        },
+                        page_size=20,
+                        style_table={'height': '600px', 'overflowY': 'auto'},
+                        sort_action="native"
+                    )
+                ])
+            else:
+                defendant_table = html.Div([
+                    table_info,
+                    html.P("No defendants found matching the criteria", style={'color': '#7f8c8d', 'fontStyle': 'italic'})
+                ])
+        
+        # Create summary statistics with improved styling
+        summary_html = html.Div([
+            html.Div([
+                html.Span(f"Total Unique Defendants with {primary_statute_display}: ", 
+                         style={'fontWeight': '600', 'color': '#2c3e50'}),
+                html.Span(f"{total_defendants}", style={'fontSize': '20px', 'color': '#e74c3c', 'fontWeight': 'bold'})
+            ], style={'marginBottom': '8px'}),
+            html.Div([
+                html.Span("Total Unique Secondary Statutes: ", 
+                         style={'fontWeight': '600', 'color': '#2c3e50'}),
+                html.Span(f"{len(plot_df)}", style={'fontSize': '18px', 'color': '#3498db'})
+            ], style={'marginBottom': '8px'}),
+            html.Div([
+                html.Span("Agency Filter: ", 
+                         style={'fontWeight': '600', 'color': '#2c3e50'}),
+                html.Span(selected_agency, style={'color': '#7f8c8d'})
+            ])
         ])
-    ])
-    
-    # Generate insights including demographic analysis
-    insights = []
-    
-    # Demographic disparities
-    if demographics['race']:
-        race_df = pd.DataFrame(list(demographics['race'].items()), columns=['Race', 'Count'])
-        race_df['Percentage'] = (race_df['Count'] / race_df['Count'].sum() * 100).round(1)
-        race_df = race_df.sort_values('Percentage', ascending=False)
         
-        insights.append(html.Div([
-            html.Span("Racial Distribution: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            ', '.join([f"{row['Race']}: {row['Count']} ({row['Percentage']}%)" 
-                      for _, row in race_df.head(3).iterrows()])
-        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
+        # Generate insights including demographic analysis
+        insights = []
         
-        # Check for potential disparities
-        if race_df.iloc[0]['Percentage'] > 60:
+        # Demographic disparities
+        if demographics['race']:
+            race_df = pd.DataFrame(list(demographics['race'].items()), columns=['Race', 'Count'])
+            race_df['Percentage'] = (race_df['Count'] / race_df['Count'].sum() * 100).round(1)
+            race_df = race_df.sort_values('Percentage', ascending=False)
+            
             insights.append(html.Div([
-                html.Span("⚠️ Potential Disparate Impact: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-                html.Span(f"{race_df.iloc[0]['Race']} defendants represent {race_df.iloc[0]['Percentage']}% "
-                         f"of {primary_statute_display} charges", style={'color': '#e74c3c'})
+                html.Span("Racial Distribution: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                ', '.join([f"{row['Race']}: {row['Count']} ({row['Percentage']}%)" 
+                          for _, row in race_df.head(3).iterrows()])
             ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
-    
-    # Age patterns
-    if demographics['age']:
-        age_df = pd.DataFrame(list(demographics['age'].items()), columns=['Age', 'Count'])
-        young_adult_count = age_df[age_df['Age'].isin(['18-25', '26-35'])]['Count'].sum()
-        young_adult_pct = round(young_adult_count / total_defendants * 100, 1)
-        if young_adult_pct > 60:
-            insights.append(html.Div([
-                html.Span("Age Pattern: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-                f"Young adults (18-35) account for {young_adult_pct}% of defendants"
-            ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
-    
-    # Officer patterns
-    if len(officer_data) > 0:
-        top_officer = officer_data.iloc[0]
-        insights.append(html.Div([
-            html.Span("Top Charging Officer: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            f"{top_officer['Lead_Officer']} with {top_officer['Total_Charges']} total charges "
-            f"({top_officer['790_07_Charges']} are 790.07 charges)"
-        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
-    
-    # Marijuana charges analysis
-    marijuana_charges = plot_df[plot_df['Statute'].str.contains('893.13', na=False)]
-    if len(marijuana_charges) > 0:
-        marijuana_defendants = marijuana_charges['Unique_Defendants'].sum()
-        marijuana_percentage = round(marijuana_defendants / total_defendants * 100, 1)
-        insights.append(html.Div([
-            html.Span("🌿 Marijuana Connection: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            f"{marijuana_defendants} defendants ({marijuana_percentage}%) have marijuana charges (893.13) along with {primary_statute_display}"
-        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
+            
+            # Check for potential disparities
+            if race_df.iloc[0]['Percentage'] > 60:
+                insights.append(html.Div([
+                    html.Span("⚠️ Potential Disparate Impact: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                    html.Span(f"{race_df.iloc[0]['Race']} defendants represent {race_df.iloc[0]['Percentage']}% "
+                             f"of {primary_statute_display} charges", style={'color': '#e74c3c'})
+                ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
         
-        # Additional marijuana insight
-        insights.append(html.Div([
-            html.Span("📊 Filtered Table Note: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            "The defendant table below shows only those with marijuana-related charges, excluding cases with serious violent offenses"
-        ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
-    
-    # Top secondary charges
-    if len(plot_df) >= 3:
-        top_3 = plot_df.head(3)
-        insights.append(html.Div([
-            html.Span("Top 3 Secondary Charges: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            html.Ol([
-                html.Li(f"{row['Display_Description']} ({row['Statute']}) - {row['Unique_Defendants']} defendants") 
-                for _, row in top_3.iterrows()
-            ], style={'marginTop': '5px', 'marginBottom': '0'})
-        ], style={'padding': '10px 0'}))
-    
-    insights_div = html.Div(insights) if insights else html.P("Insufficient data for detailed pattern analysis")
-    
-            return fig, defendant_table, summary_html, insights_div, demo_fig, age_race_fig, officer_fig
+        # Age patterns
+        if demographics['age']:
+            age_df = pd.DataFrame(list(demographics['age'].items()), columns=['Age', 'Count'])
+            young_adult_count = age_df[age_df['Age'].isin(['18-25', '26-35'])]['Count'].sum()
+            young_adult_pct = round(young_adult_count / total_defendants * 100, 1)
+            if young_adult_pct > 60:
+                insights.append(html.Div([
+                    html.Span("Age Pattern: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                    f"Young adults (18-35) account for {young_adult_pct}% of defendants"
+                ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
+        
+        # Officer patterns
+        if len(officer_data) > 0:
+            top_officer = officer_data.iloc[0]
+            insights.append(html.Div([
+                html.Span("Top Charging Officer: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                f"{top_officer['Lead_Officer']} with {top_officer['Total_Charges']} total charges "
+                f"({top_officer['790_07_Charges']} are 790.07 charges)"
+            ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
+        
+        # Marijuana charges analysis
+        marijuana_charges = plot_df[plot_df['Statute'].str.contains('893.13', na=False)]
+        if len(marijuana_charges) > 0:
+            marijuana_defendants = marijuana_charges['Unique_Defendants'].sum()
+            marijuana_percentage = round(marijuana_defendants / total_defendants * 100, 1)
+            insights.append(html.Div([
+                html.Span("🌿 Marijuana Connection: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                f"{marijuana_defendants} defendants ({marijuana_percentage}%) have marijuana charges (893.13) along with {primary_statute_display}"
+            ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
+            
+            # Additional marijuana insight
+            insights.append(html.Div([
+                html.Span("📊 Filtered Table Note: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                "The defendant table below shows only those with marijuana-related charges, excluding cases with serious violent offenses"
+            ], style={'padding': '10px 0', 'borderBottom': '1px solid #ecf0f1'}))
+        
+        # Top secondary charges
+        if len(plot_df) >= 3:
+            top_3 = plot_df.head(3)
+            insights.append(html.Div([
+                html.Span("Top 3 Secondary Charges: ", style={'color': '#2c3e50', 'fontWeight': '600'}),
+                html.Ol([
+                    html.Li(f"{row['Display_Description']} ({row['Statute']}) - {row['Unique_Defendants']} defendants") 
+                    for _, row in top_3.iterrows()
+                ], style={'marginTop': '5px', 'marginBottom': '0'})
+            ], style={'padding': '10px 0'}))
+        
+        insights_div = html.Div(insights) if insights else html.P("Insufficient data for detailed pattern analysis")
+        
+        return fig, defendant_table, summary_html, insights_div, demo_fig, age_race_fig, officer_fig
     except Exception as e:
         print(f"Error in callback: {str(e)}")
         import traceback
